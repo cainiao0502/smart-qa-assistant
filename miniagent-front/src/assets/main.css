@@ -1,0 +1,264 @@
+@import url('https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@500;600;700;800&display=swap');
+
+:root {
+  color-scheme: dark;
+
+  --primary-color: #5b6cff;
+  --primary-strong: #4456f6;
+  --primary-soft: #eef1ff;
+  --primary-soft-hover: #e3e8ff;
+  --accent-color: #1ec8a5;
+  --accent-soft: rgba(30, 200, 165, 0.12);
+  --warning-color: #ffb648;
+  --danger-color: #f45f7a;
+  --danger-soft: rgba(244, 95, 122, 0.12);
+  --info-color: #4d8dff;
+
+  --bg-app: #0d1422;
+  --bg-app-gradient:
+    radial-gradient(circle at top left, rgba(91, 108, 255, 0.18), transparent 28%),
+    radial-gradient(circle at top right, rgba(30, 200, 165, 0.14), transparent 24%),
+    linear-gradient(180deg, #121a2b 0%, #0d1422 100%);
+  --bg-sidebar: rgba(16, 24, 40, 0.9);
+  --bg-sidebar-hover: rgba(255, 255, 255, 0.08);
+  --bg-surface: rgba(20, 28, 46, 0.78);
+  --bg-surface-strong: rgba(24, 34, 56, 0.94);
+  --bg-surface-muted: rgba(30, 40, 64, 0.9);
+  --bg-surface-dark: #111827;
+  --bg-chip: rgba(91, 108, 255, 0.16);
+
+  --text-primary: #f3f7ff;
+  --text-secondary: #b6c0d4;
+  --text-muted: #7f8aa3;
+  --text-inverse: #f8fbff;
+
+  --border-light: rgba(148, 163, 184, 0.12);
+  --border-medium: rgba(91, 108, 255, 0.24);
+  --border-strong: rgba(91, 108, 255, 0.34);
+
+  --shadow-xs: 0 8px 24px rgba(2, 6, 23, 0.2);
+  --shadow-sm: 0 12px 30px rgba(2, 6, 23, 0.24);
+  --shadow-md: 0 18px 44px rgba(2, 6, 23, 0.3);
+  --shadow-lg: 0 28px 70px rgba(2, 6, 23, 0.42);
+  --shadow-glow: 0 0 0 1px rgba(91, 108, 255, 0.16), 0 20px 60px rgba(91, 108, 255, 0.2);
+  --shadow-glow-soft: 0 10px 35px rgba(91, 108, 255, 0.18);
+
+  --radius-sm: 10px;
+  --radius-md: 14px;
+  --radius-lg: 20px;
+  --radius-xl: 26px;
+  --radius-pill: 999px;
+
+  --sidebar-width: 248px;
+  --shell-gap: 12px;
+  --content-padding: 16px;
+  --transition-fast: 160ms cubic-bezier(0.4, 0, 0.2, 1);
+  --transition-normal: 260ms cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+html,
+body,
+#app {
+  width: 100%;
+  min-height: 100%;
+  margin: 0;
+}
+
+html {
+  overflow: hidden;
+}
+
+body {
+  overflow: hidden;
+  font-family: 'Plus Jakarta Sans', 'PingFang SC', 'Microsoft YaHei', sans-serif;
+  color: var(--text-primary);
+  background: var(--bg-app-gradient);
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+button,
+input,
+textarea,
+select {
+  font: inherit;
+}
+
+a {
+  color: inherit;
+  text-decoration: none;
+}
+
+h1,
+h2,
+h3,
+h4,
+h5,
+h6,
+p {
+  margin: 0;
+}
+
+img,
+svg {
+  display: block;
+}
+
+::selection {
+  background: rgba(91, 108, 255, 0.18);
+}
+
+::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+
+::-webkit-scrollbar-thumb {
+  background: rgba(138, 149, 168, 0.4);
+  border-radius: 999px;
+}
+
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+:focus-visible {
+  outline: 2px solid rgba(91, 108, 255, 0.42);
+  outline-offset: 2px;
+}
+
+.glass-panel {
+  background: var(--bg-surface);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  box-shadow: var(--shadow-md);
+  backdrop-filter: blur(22px) saturate(160%);
+  -webkit-backdrop-filter: blur(22px) saturate(160%);
+}
+
+.section-heading {
+  font-size: 13px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--text-muted);
+}
+
+.soft-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 12px;
+  border-radius: var(--radius-pill);
+  background: var(--bg-chip);
+  color: var(--primary-strong);
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.el-button {
+  --el-button-border-radius: 12px;
+  font-weight: 700;
+}
+
+.el-button--primary {
+  --el-button-bg-color: var(--primary-color);
+  --el-button-border-color: var(--primary-color);
+  --el-button-hover-bg-color: var(--primary-strong);
+  --el-button-hover-border-color: var(--primary-strong);
+  --el-button-active-bg-color: var(--primary-strong);
+  --el-button-active-border-color: var(--primary-strong);
+}
+
+.el-input__wrapper,
+.el-textarea__inner,
+.el-select .el-input__wrapper {
+  border-radius: 14px;
+  background: rgba(15, 23, 42, 0.42) !important;
+  color: var(--text-primary);
+  box-shadow: 0 0 0 1px rgba(148, 163, 184, 0.1) inset !important;
+}
+
+.el-select__placeholder,
+.el-input__inner::placeholder,
+.el-textarea__inner::placeholder {
+  color: var(--text-muted) !important;
+}
+
+.el-select .el-input__inner,
+.el-select__selected-item,
+.el-input__inner,
+.el-textarea__inner,
+.el-select__caret,
+.el-input__icon {
+  color: var(--text-primary) !important;
+}
+
+.el-button.is-plain,
+.el-button--default {
+  --el-button-text-color: var(--text-primary);
+  --el-button-bg-color: rgba(255, 255, 255, 0.92);
+  --el-button-border-color: rgba(148, 163, 184, 0.24);
+  --el-button-hover-text-color: #0f172a;
+  --el-button-hover-bg-color: #ffffff;
+  --el-button-hover-border-color: rgba(91, 108, 255, 0.28);
+}
+
+.el-input__wrapper.is-focus,
+.el-select .el-input__wrapper.is-focus,
+.el-textarea__inner:focus {
+  box-shadow:
+    0 0 0 1px rgba(91, 108, 255, 0.42) inset,
+    0 0 0 4px rgba(91, 108, 255, 0.1) !important;
+}
+
+.el-table {
+  --el-table-border-color: transparent;
+  --el-table-tr-bg-color: transparent;
+  --el-table-bg-color: transparent;
+  --el-fill-color-blank: transparent;
+  --el-table-row-hover-bg-color: rgba(91, 108, 255, 0.08);
+  --el-table-header-bg-color: rgba(255, 255, 255, 0.04);
+  --el-text-color-regular: var(--text-secondary);
+}
+
+.el-table th.el-table__cell {
+  color: var(--text-secondary);
+  font-size: 12px;
+  font-weight: 800;
+  letter-spacing: 0.04em;
+}
+
+.el-dialog {
+  border-radius: 28px !important;
+  overflow: hidden;
+  background: rgba(20, 28, 46, 0.96) !important;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+.el-dialog__title,
+.el-form-item__label,
+.el-select__placeholder,
+.el-input__inner,
+.el-textarea__inner,
+.el-progress__text {
+  color: var(--text-primary) !important;
+}
+
+@media (max-width: 1100px) {
+  :root {
+    --sidebar-width: 100%;
+    --content-padding: 14px;
+    --shell-gap: 12px;
+  }
+
+  html,
+  body {
+    overflow: auto;
+  }
+}
