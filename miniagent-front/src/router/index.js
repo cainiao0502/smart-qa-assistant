@@ -17,6 +17,11 @@ const router = createRouter({
       path: '/kb/:kbId/docs',
       name: 'documents',
       component: () => import('@/views/DocumentView.vue')
+    },
+    {
+      path: '/mcp',
+      name: 'mcp',
+      component: () => import('@/views/McpView.vue')
     }
   ]
 })

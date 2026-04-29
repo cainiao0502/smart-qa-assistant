@@ -1,7 +1,7 @@
 @import url('https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@500;600;700;800&display=swap');
 
 :root {
-  color-scheme: dark;
+  color-scheme: light;
 
   --primary-color: #5b6cff;
   --primary-strong: #4456f6;
@@ -14,34 +14,34 @@
   --danger-soft: rgba(244, 95, 122, 0.12);
   --info-color: #4d8dff;
 
-  --bg-app: #0d1422;
+  --bg-app: #f4f8fc;
   --bg-app-gradient:
-    radial-gradient(circle at top left, rgba(91, 108, 255, 0.18), transparent 28%),
-    radial-gradient(circle at top right, rgba(30, 200, 165, 0.14), transparent 24%),
-    linear-gradient(180deg, #121a2b 0%, #0d1422 100%);
-  --bg-sidebar: rgba(16, 24, 40, 0.9);
-  --bg-sidebar-hover: rgba(255, 255, 255, 0.08);
-  --bg-surface: rgba(20, 28, 46, 0.78);
-  --bg-surface-strong: rgba(24, 34, 56, 0.94);
-  --bg-surface-muted: rgba(30, 40, 64, 0.9);
-  --bg-surface-dark: #111827;
-  --bg-chip: rgba(91, 108, 255, 0.16);
+    radial-gradient(circle at top left, rgba(123, 211, 255, 0.22), transparent 28%),
+    radial-gradient(circle at top right, rgba(191, 231, 255, 0.22), transparent 24%),
+    linear-gradient(180deg, #f8fbff 0%, #f1f6fb 100%);
+  --bg-sidebar: rgba(255, 255, 255, 0.92);
+  --bg-sidebar-hover: rgba(223, 234, 247, 0.72);
+  --bg-surface: rgba(255, 255, 255, 0.84);
+  --bg-surface-strong: rgba(255, 255, 255, 0.96);
+  --bg-surface-muted: rgba(247, 250, 254, 0.94);
+  --bg-surface-dark: #eaf1f8;
+  --bg-chip: rgba(91, 108, 255, 0.1);
 
-  --text-primary: #f3f7ff;
-  --text-secondary: #b6c0d4;
-  --text-muted: #7f8aa3;
-  --text-inverse: #f8fbff;
+  --text-primary: #24364d;
+  --text-secondary: #61758d;
+  --text-muted: #8ea0b2;
+  --text-inverse: #ffffff;
 
-  --border-light: rgba(148, 163, 184, 0.12);
-  --border-medium: rgba(91, 108, 255, 0.24);
-  --border-strong: rgba(91, 108, 255, 0.34);
+  --border-light: rgba(188, 205, 223, 0.42);
+  --border-medium: rgba(91, 108, 255, 0.18);
+  --border-strong: rgba(91, 108, 255, 0.28);
 
-  --shadow-xs: 0 8px 24px rgba(2, 6, 23, 0.2);
-  --shadow-sm: 0 12px 30px rgba(2, 6, 23, 0.24);
-  --shadow-md: 0 18px 44px rgba(2, 6, 23, 0.3);
-  --shadow-lg: 0 28px 70px rgba(2, 6, 23, 0.42);
-  --shadow-glow: 0 0 0 1px rgba(91, 108, 255, 0.16), 0 20px 60px rgba(91, 108, 255, 0.2);
-  --shadow-glow-soft: 0 10px 35px rgba(91, 108, 255, 0.18);
+  --shadow-xs: 0 8px 24px rgba(156, 178, 204, 0.12);
+  --shadow-sm: 0 12px 30px rgba(156, 178, 204, 0.16);
+  --shadow-md: 0 18px 44px rgba(156, 178, 204, 0.2);
+  --shadow-lg: 0 28px 70px rgba(156, 178, 204, 0.24);
+  --shadow-glow: 0 0 0 1px rgba(91, 108, 255, 0.1), 0 20px 60px rgba(91, 108, 255, 0.08);
+  --shadow-glow-soft: 0 10px 35px rgba(91, 108, 255, 0.08);
 
   --radius-sm: 10px;
   --radius-md: 14px;
@@ -135,7 +135,7 @@ svg {
 
 .glass-panel {
   background: var(--bg-surface);
-  border: 1px solid rgba(255, 255, 255, 0.08);
+  border: 1px solid rgba(194, 211, 230, 0.42);
   box-shadow: var(--shadow-md);
   backdrop-filter: blur(22px) saturate(160%);
   -webkit-backdrop-filter: blur(22px) saturate(160%);
@@ -179,9 +179,9 @@ svg {
 .el-textarea__inner,
 .el-select .el-input__wrapper {
   border-radius: 14px;
-  background: rgba(15, 23, 42, 0.42) !important;
+  background: rgba(255, 255, 255, 0.94) !important;
   color: var(--text-primary);
-  box-shadow: 0 0 0 1px rgba(148, 163, 184, 0.1) inset !important;
+  box-shadow: 0 0 0 1px rgba(188, 205, 223, 0.62) inset !important;
 }
 
 .el-select__placeholder,
@@ -202,8 +202,8 @@ svg {
 .el-button.is-plain,
 .el-button--default {
   --el-button-text-color: var(--text-primary);
-  --el-button-bg-color: rgba(255, 255, 255, 0.92);
-  --el-button-border-color: rgba(148, 163, 184, 0.24);
+  --el-button-bg-color: rgba(255, 255, 255, 0.98);
+  --el-button-border-color: rgba(188, 205, 223, 0.62);
   --el-button-hover-text-color: #0f172a;
   --el-button-hover-bg-color: #ffffff;
   --el-button-hover-border-color: rgba(91, 108, 255, 0.28);
@@ -222,8 +222,8 @@ svg {
   --el-table-tr-bg-color: transparent;
   --el-table-bg-color: transparent;
   --el-fill-color-blank: transparent;
-  --el-table-row-hover-bg-color: rgba(91, 108, 255, 0.08);
-  --el-table-header-bg-color: rgba(255, 255, 255, 0.04);
+  --el-table-row-hover-bg-color: rgba(214, 230, 247, 0.42);
+  --el-table-header-bg-color: rgba(245, 249, 254, 0.94);
   --el-text-color-regular: var(--text-secondary);
 }
 
@@ -237,8 +237,8 @@ svg {
 .el-dialog {
   border-radius: 28px !important;
   overflow: hidden;
-  background: rgba(20, 28, 46, 0.96) !important;
-  border: 1px solid rgba(255, 255, 255, 0.08);
+  background: rgba(255, 255, 255, 0.98) !important;
+  border: 1px solid rgba(194, 211, 230, 0.46);
 }
 
 .el-dialog__title,

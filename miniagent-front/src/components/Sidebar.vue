@@ -1,7 +1,7 @@
 <template>
-  <aside class="sidebar glass-panel">
+  <aside class="sidebar glass-panel" :class="{ collapsed }">
     <div class="sidebar-header">
-      <div class="brand">
+      <div class="brand" :class="{ centered: collapsed }">
         <div class="brand-mark">
           <svg width="22" height="22" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
             <path d="M12 2L2 7L12 12L22 7L12 2Z" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
@@ -9,38 +9,49 @@
             <path d="M2 12L12 17L22 12" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
           </svg>
         </div>
-        <div class="brand-copy">
+        <div v-if="!collapsed" class="brand-copy">
           <span class="brand-title">智能问答 Ragent</span>
           <span class="brand-subtitle">Knowledge Assistant Workspace</span>
         </div>
       </div>
 
-      <button class="new-chat-btn" type="button" @click="createNewChat">
-        <el-icon><Plus /></el-icon>
-        <span>新建对话</span>
+      <button
+        class="collapse-btn"
+        type="button"
+        :title="collapsed ? '展开侧边栏' : '收起侧边栏'"
+        @click="$emit('toggle')"
+      >
+        <el-icon v-if="collapsed"><Expand /></el-icon>
+        <el-icon v-else><Fold /></el-icon>
       </button>
     </div>
 
+    <button class="new-chat-btn" :class="{ compact: collapsed }" type="button" @click="createNewChat">
+      <el-icon><Plus /></el-icon>
+      <span v-if="!collapsed">新建对话</span>
+    </button>
+
     <nav class="nav-block">
-      <span class="section-label">工作区导航</span>
+      <span v-if="!collapsed" class="section-label">工作区导航</span>
       <router-link
         v-for="item in navItems"
         :key="item.path"
         :to="item.path"
         class="nav-item"
-        :class="{ active: isActive(item.path) }"
+        :class="{ active: isActive(item.path), compact: collapsed }"
+        :title="collapsed ? item.label : ''"
       >
         <div class="nav-item-icon">
           <el-icon><component :is="item.icon" /></el-icon>
         </div>
-        <div class="nav-item-copy">
+        <div v-if="!collapsed" class="nav-item-copy">
           <span class="nav-item-title">{{ item.label }}</span>
           <span class="nav-item-desc">{{ item.description }}</span>
         </div>
       </router-link>
     </nav>
 
-    <section class="history-block">
+    <section v-if="!collapsed" class="history-block">
       <div class="history-header">
         <div>
           <span class="section-label">最近会话</span>
@@ -83,12 +94,12 @@
       </div>
     </section>
 
-    <div class="sidebar-footer">
+    <div class="sidebar-footer" :class="{ compact: collapsed }">
       <div class="footer-card">
         <div class="footer-avatar">
           <el-icon><User /></el-icon>
         </div>
-        <div class="footer-copy">
+        <div v-if="!collapsed" class="footer-copy">
           <span class="footer-name">当前工作区</span>
           <span class="footer-role">轻量 RAG 助手界面</span>
         </div>
@@ -101,8 +112,17 @@
 import { computed, onMounted, onUnmounted, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { ElMessageBox } from 'element-plus'
-import { ChatLineSquare, Folder, Plus, User } from '@element-plus/icons-vue'
+import { ChatLineSquare, Connection, Expand, Fold, Folder, Plus, User } from '@element-plus/icons-vue'
 import { clearRecentSessions, listRecentSessions, subscribeRecentSessions } from '@/utils/chatSessions'
+
+defineProps({
+  collapsed: {
+    type: Boolean,
+    default: false
+  }
+})
+
+defineEmits(['toggle'])
 
 const route = useRoute()
 const router = useRouter()
@@ -113,13 +133,19 @@ const navItems = [
     path: '/',
     label: '智能问答',
     description: '面向知识库的检索问答',
-    icon: 'ChatLineSquare'
+    icon: ChatLineSquare
   },
   {
     path: '/kb',
     label: '知识库管理',
     description: '查看库、文档与统计信息',
-    icon: 'Folder'
+    icon: Folder
+  },
+  {
+    path: '/mcp',
+    label: 'MCP 管理',
+    description: '查看服务、工具和连接状态',
+    icon: Connection
   }
 ]
 
@@ -188,37 +214,57 @@ onUnmounted(() => {
   width: var(--sidebar-width);
   height: calc(100dvh - (var(--shell-gap) * 2));
   min-height: 0;
-  border-radius: var(--radius-xl);
+  border-radius: 28px;
   padding: 14px;
   display: flex;
   flex-direction: column;
+  overflow: auto;
+  overscroll-behavior: contain;
   background:
-    linear-gradient(180deg, rgba(15, 23, 42, 0.92) 0%, rgba(17, 24, 39, 0.96) 100%);
-  border-color: rgba(255, 255, 255, 0.08);
-  box-shadow: 0 30px 70px rgba(2, 6, 23, 0.36);
+    linear-gradient(180deg, rgba(255, 255, 255, 0.94) 0%, rgba(246, 250, 255, 0.98) 100%);
+  border: 1px solid rgba(198, 212, 230, 0.55);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.92),
+    0 20px 44px rgba(164, 183, 210, 0.16);
+  transition:
+    width var(--transition-normal),
+    padding var(--transition-normal),
+    box-shadow var(--transition-fast);
+}
+
+.sidebar.collapsed {
+  width: 84px;
+  padding: 14px 10px;
 }
 
 .sidebar-header {
   display: flex;
-  flex-direction: column;
-  gap: 14px;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
 }
 
 .brand {
   display: flex;
   align-items: center;
-  gap: 14px;
+  gap: 12px;
+  min-width: 0;
+}
+
+.brand.centered {
+  justify-content: center;
 }
 
 .brand-mark {
-  width: 40px;
-  height: 40px;
-  border-radius: 14px;
+  width: 42px;
+  height: 42px;
+  border-radius: 16px;
   display: grid;
   place-items: center;
   color: #fff;
-  background: linear-gradient(135deg, rgba(91, 108, 255, 0.95), rgba(129, 140, 248, 0.78));
-  box-shadow: 0 16px 34px rgba(91, 108, 255, 0.35);
+  background: linear-gradient(135deg, #8ccfff, #7e8fff);
+  box-shadow: 0 12px 24px rgba(141, 166, 210, 0.22);
+  flex-shrink: 0;
 }
 
 .brand-copy {
@@ -229,14 +275,34 @@ onUnmounted(() => {
 }
 
 .brand-title {
-  color: var(--text-inverse);
+  color: #24364d;
   font-size: 14px;
   font-weight: 800;
 }
 
 .brand-subtitle {
-  color: rgba(226, 232, 240, 0.66);
+  color: #8293a8;
   font-size: 10px;
+}
+
+.collapse-btn {
+  width: 34px;
+  height: 34px;
+  border: 1px solid rgba(201, 215, 233, 0.7);
+  border-radius: 12px;
+  background: rgba(255, 255, 255, 0.86);
+  color: #607792;
+  display: grid;
+  place-items: center;
+  cursor: pointer;
+  flex-shrink: 0;
+  transition: background var(--transition-fast), color var(--transition-fast), transform var(--transition-fast);
+}
+
+.collapse-btn:hover {
+  background: #ffffff;
+  color: #3e5875;
+  transform: translateY(-1px);
 }
 
 .new-chat-btn {
@@ -246,10 +312,11 @@ onUnmounted(() => {
   gap: 10px;
   width: 100%;
   min-height: 42px;
-  border: 1px solid rgba(255, 255, 255, 0.08);
-  border-radius: 14px;
-  background: linear-gradient(135deg, rgba(91, 108, 255, 0.24), rgba(91, 108, 255, 0.12));
-  color: var(--text-inverse);
+  margin-top: 14px;
+  border: 1px solid rgba(192, 209, 229, 0.68);
+  border-radius: 16px;
+  background: linear-gradient(135deg, rgba(236, 245, 255, 0.96), rgba(223, 237, 255, 0.94));
+  color: #325a86;
   font-weight: 700;
   cursor: pointer;
   transition: transform var(--transition-fast), background var(--transition-fast), box-shadow var(--transition-fast);
@@ -257,8 +324,13 @@ onUnmounted(() => {
 
 .new-chat-btn:hover {
   transform: translateY(-1px);
-  background: linear-gradient(135deg, rgba(91, 108, 255, 0.34), rgba(91, 108, 255, 0.18));
-  box-shadow: 0 16px 30px rgba(91, 108, 255, 0.18);
+  background: linear-gradient(135deg, rgba(240, 247, 255, 1), rgba(229, 241, 255, 0.98));
+  box-shadow: 0 14px 24px rgba(176, 196, 222, 0.18);
+}
+
+.new-chat-btn.compact {
+  min-height: 44px;
+  padding: 0;
 }
 
 .nav-block,
@@ -268,10 +340,10 @@ onUnmounted(() => {
 
 .section-label {
   display: inline-block;
-  color: rgba(203, 213, 225, 0.58);
+  color: #99a8b8;
   font-size: 11px;
   font-weight: 800;
-  letter-spacing: 0.14em;
+  letter-spacing: 0.12em;
   text-transform: uppercase;
   margin-bottom: 12px;
 }
@@ -286,37 +358,42 @@ onUnmounted(() => {
   align-items: center;
   gap: 12px;
   padding: 10px 12px;
-  border-radius: 14px;
+  border-radius: 16px;
   margin-bottom: 8px;
   transition: background var(--transition-fast), transform var(--transition-fast), border-color var(--transition-fast);
   border: 1px solid transparent;
 }
 
+.nav-item.compact {
+  justify-content: center;
+  padding: 10px 0;
+}
+
 .nav-item:hover {
-  background: var(--bg-sidebar-hover);
+  background: rgba(234, 242, 251, 0.88);
   transform: translateX(2px);
 }
 
 .nav-item.active {
-  background: linear-gradient(135deg, rgba(91, 108, 255, 0.22), rgba(91, 108, 255, 0.08));
-  border-color: rgba(91, 108, 255, 0.22);
-  box-shadow: inset 0 0 0 1px rgba(91, 108, 255, 0.08);
+  background: linear-gradient(135deg, rgba(225, 238, 255, 0.98), rgba(239, 246, 255, 0.96));
+  border-color: rgba(179, 203, 230, 0.62);
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.42);
 }
 
 .nav-item-icon {
-  width: 32px;
-  height: 32px;
-  border-radius: 10px;
+  width: 34px;
+  height: 34px;
+  border-radius: 12px;
   display: grid;
   place-items: center;
-  background: rgba(255, 255, 255, 0.07);
-  color: #dde7ff;
+  background: rgba(233, 241, 251, 0.96);
+  color: #6280a0;
   flex-shrink: 0;
 }
 
 .nav-item.active .nav-item-icon {
-  background: rgba(91, 108, 255, 0.24);
-  color: #ffffff;
+  background: linear-gradient(135deg, #bfe4ff, #b9d4ff);
+  color: #325b89;
 }
 
 .nav-item-copy {
@@ -326,19 +403,17 @@ onUnmounted(() => {
 }
 
 .nav-item-title {
-  color: #f8fbff;
+  color: #24364d;
   font-size: 13px;
   font-weight: 700;
 }
 
 .nav-item-desc {
-  color: rgba(226, 232, 240, 0.6);
+  color: #8697aa;
   font-size: 11px;
 }
 
 .history-block {
-  flex: 1;
-  min-height: 0;
   display: flex;
   flex-direction: column;
 }
@@ -352,26 +427,25 @@ onUnmounted(() => {
 }
 
 .history-caption {
-  color: rgba(148, 163, 184, 0.55);
+  color: #98a7b8;
   font-size: 12px;
 }
 
 .clear-btn {
   border: 0;
   background: transparent;
-  color: rgba(203, 213, 225, 0.72);
+  color: #8093a8;
   font-size: 12px;
   font-weight: 700;
   cursor: pointer;
 }
 
 .history-list {
-  flex: 1;
-  overflow: auto;
+  overflow: visible;
   display: flex;
   flex-direction: column;
   gap: 10px;
-  padding-right: 4px;
+  padding-right: 2px;
 }
 
 .history-item {
@@ -380,23 +454,24 @@ onUnmounted(() => {
   align-items: stretch;
   gap: 8px;
   width: 100%;
-  border: 1px solid transparent;
-  border-radius: 14px;
-  background: rgba(255, 255, 255, 0.04);
+  border: 1px solid rgba(227, 236, 246, 0.9);
+  border-radius: 16px;
+  background: rgba(255, 255, 255, 0.88);
   padding: 12px;
   cursor: pointer;
   text-align: left;
-  transition: background var(--transition-fast), border-color var(--transition-fast), transform var(--transition-fast);
+  transition: background var(--transition-fast), border-color var(--transition-fast), transform var(--transition-fast), box-shadow var(--transition-fast);
 }
 
 .history-item:hover {
-  background: rgba(255, 255, 255, 0.08);
+  background: rgba(255, 255, 255, 0.98);
   transform: translateY(-1px);
+  box-shadow: 0 10px 18px rgba(181, 198, 221, 0.12);
 }
 
 .history-item.active {
-  background: linear-gradient(135deg, rgba(91, 108, 255, 0.22), rgba(30, 200, 165, 0.09));
-  border-color: rgba(91, 108, 255, 0.24);
+  background: linear-gradient(135deg, rgba(235, 244, 255, 0.98), rgba(246, 250, 255, 0.98));
+  border-color: rgba(180, 203, 230, 0.72);
 }
 
 .history-item-top {
@@ -407,7 +482,7 @@ onUnmounted(() => {
 }
 
 .history-title {
-  color: #f8fbff;
+  color: #24364d;
   font-size: 13px;
   font-weight: 700;
   overflow: hidden;
@@ -417,7 +492,7 @@ onUnmounted(() => {
 
 .history-time,
 .history-preview {
-  color: rgba(226, 232, 240, 0.6);
+  color: #8798aa;
   font-size: 12px;
 }
 
@@ -438,8 +513,8 @@ onUnmounted(() => {
   align-self: flex-start;
   padding: 4px 10px;
   border-radius: var(--radius-pill);
-  background: rgba(255, 255, 255, 0.08);
-  color: #dbe6ff;
+  background: rgba(228, 240, 255, 0.96);
+  color: #5f7ea2;
   font-size: 11px;
   font-weight: 700;
 }
@@ -450,7 +525,7 @@ onUnmounted(() => {
   place-items: center;
   text-align: center;
   padding: 12px;
-  color: rgba(226, 232, 240, 0.72);
+  color: #8d9daf;
 }
 
 .history-empty-icon {
@@ -460,12 +535,13 @@ onUnmounted(() => {
   border-radius: 18px;
   display: grid;
   place-items: center;
-  background: rgba(255, 255, 255, 0.08);
+  background: rgba(235, 242, 250, 0.96);
+  color: #6887a7;
 }
 
 .history-empty h3 {
   font-size: 15px;
-  color: #f8fbff;
+  color: #24364d;
   margin-bottom: 8px;
 }
 
@@ -478,13 +554,23 @@ onUnmounted(() => {
   padding-top: 16px;
 }
 
+.sidebar-footer.compact {
+  padding-top: 14px;
+}
+
 .footer-card {
   display: flex;
   align-items: center;
   gap: 12px;
-  border-radius: 14px;
-  background: rgba(255, 255, 255, 0.05);
+  border-radius: 16px;
+  background: rgba(255, 255, 255, 0.9);
+  border: 1px solid rgba(225, 236, 246, 0.88);
   padding: 12px;
+}
+
+.sidebar-footer.compact .footer-card {
+  justify-content: center;
+  padding: 10px 0;
 }
 
 .footer-avatar {
@@ -493,8 +579,8 @@ onUnmounted(() => {
   border-radius: 12px;
   display: grid;
   place-items: center;
-  background: linear-gradient(135deg, rgba(91, 108, 255, 0.32), rgba(30, 200, 165, 0.2));
-  color: #f8fbff;
+  background: linear-gradient(135deg, rgba(224, 238, 255, 0.98), rgba(213, 231, 255, 0.98));
+  color: #6080a3;
 }
 
 .footer-copy {
@@ -503,18 +589,19 @@ onUnmounted(() => {
 }
 
 .footer-name {
-  color: #f8fbff;
+  color: #24364d;
   font-size: 12px;
   font-weight: 700;
 }
 
 .footer-role {
-  color: rgba(226, 232, 240, 0.58);
+  color: #8b9caf;
   font-size: 11px;
 }
 
 @media (max-width: 1100px) {
-  .sidebar {
+  .sidebar,
+  .sidebar.collapsed {
     position: relative;
     top: 0;
     left: 0;

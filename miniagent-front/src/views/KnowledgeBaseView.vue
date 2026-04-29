@@ -4,7 +4,7 @@
       <header class="kb-hero">
         <div class="kb-hero-copy">
           <span class="soft-chip">知识库管理中心</span>
-          <h1>把每个知识库变成一块清晰、可管理的资产面板</h1>
+          <h1>把每一个知识库变成一块清晰、可管理的业务资产面板</h1>
           <p>在这里创建知识库、查看文档规模和索引体量，并快速进入具体文档工作区。</p>
         </div>
         <el-button type="primary" size="large" @click="showCreateDialog = true">
@@ -129,7 +129,7 @@
             :autosize="{ minRows: 4, maxRows: 12 }"
             maxlength="5000"
             show-word-limit
-            placeholder="详细描述这个知识库沉淀的主题范围、适用对象、核心文档、业务规则与使用边界，后续检索和管理都会更清晰。"
+            placeholder="详细描述这个知识库覆盖的主题范围、适用对象、核心文档、业务规则与使用边界，后续检索和管理都会更清晰。"
           />
         </el-form-item>
       </el-form>
@@ -182,7 +182,7 @@ const statsCards = computed(() => [
     label: '知识库总数',
     value: knowledgeBases.value.length,
     description: '按主题组织你的业务内容',
-    icon: 'Folder',
+    icon: Folder,
     color: '#4456f6',
     bgColor: 'rgba(91, 108, 255, 0.12)'
   },
@@ -190,7 +190,7 @@ const statsCards = computed(() => [
     label: '文档总量',
     value: totalDocuments.value,
     description: '已上传并可继续扩充的资料',
-    icon: 'Document',
+    icon: Document,
     color: '#119b7f',
     bgColor: 'rgba(30, 200, 165, 0.12)'
   },
@@ -198,7 +198,7 @@ const statsCards = computed(() => [
     label: '已生成切片',
     value: totalChunks.value,
     description: 'RAG 检索所依赖的语义颗粒度',
-    icon: 'ChatLineSquare',
+    icon: ChatLineSquare,
     color: '#d68a10',
     bgColor: 'rgba(255, 182, 72, 0.15)'
   }
@@ -303,6 +303,8 @@ onMounted(() => {
   display: flex;
   flex-direction: column;
   gap: 14px;
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.88), rgba(246, 250, 255, 0.9));
 }
 
 .kb-hero {
@@ -310,17 +312,29 @@ onMounted(() => {
   align-items: flex-start;
   justify-content: space-between;
   gap: 16px;
-  padding: 20px;
-  border-radius: 22px;
-  background: linear-gradient(135deg, rgba(28, 37, 59, 0.94), rgba(20, 28, 46, 0.88));
-  border: 1px solid rgba(255, 255, 255, 0.08);
+  padding: 22px 24px;
+  border-radius: 24px;
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.96), rgba(243, 248, 255, 0.96)),
+    radial-gradient(circle at top left, rgba(123, 211, 255, 0.16), transparent 34%);
+  border: 1px solid rgba(194, 211, 229, 0.44);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.86),
+    0 16px 34px rgba(163, 183, 209, 0.14);
+}
+
+.kb-hero-copy {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
 }
 
 .kb-hero h1 {
   max-width: 780px;
-  font-size: 22px;
-  line-height: 1.2;
+  font-size: 24px;
+  line-height: 1.24;
   margin: 10px 0 8px;
+  color: var(--text-primary);
 }
 
 .kb-hero p {
@@ -340,10 +354,20 @@ onMounted(() => {
   display: flex;
   gap: 12px;
   padding: 16px;
-  border-radius: 18px;
-  background: rgba(255, 255, 255, 0.04);
-  border: 1px solid rgba(255, 255, 255, 0.06);
+  border-radius: 20px;
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.94), rgba(247, 250, 254, 0.96));
+  border: 1px solid rgba(198, 214, 231, 0.52);
   box-shadow: var(--shadow-xs);
+  transition:
+    transform var(--transition-fast),
+    box-shadow var(--transition-fast),
+    border-color var(--transition-fast);
+}
+
+.stat-card:hover {
+  transform: translateY(-2px);
+  border-color: rgba(91, 108, 255, 0.2);
+  box-shadow: var(--shadow-sm);
 }
 
 .stat-icon {
@@ -362,21 +386,34 @@ onMounted(() => {
   gap: 4px;
 }
 
-.stat-copy span,
-.stat-copy small {
-  color: var(--text-muted);
+.stat-copy span {
+  color: var(--text-secondary);
+  font-size: 12px;
+  font-weight: 700;
 }
 
 .stat-copy strong {
   font-size: 20px;
+  color: var(--text-primary);
+}
+
+.stat-copy small {
+  color: var(--text-muted);
+  line-height: 1.5;
 }
 
 .kb-board {
   flex: 1;
   min-height: 0;
-  border-radius: 22px;
-  padding: 16px;
+  border-radius: 24px;
+  padding: 18px;
   overflow: auto;
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.92), rgba(244, 249, 254, 0.96));
+  border: 1px solid rgba(194, 211, 229, 0.4);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.82),
+    0 14px 30px rgba(165, 185, 210, 0.12);
 }
 
 .kb-board-header {
@@ -389,7 +426,8 @@ onMounted(() => {
 
 .kb-board-header h2 {
   margin-top: 8px;
-  font-size: 16px;
+  font-size: 18px;
+  color: var(--text-primary);
 }
 
 .board-tip {
@@ -408,18 +446,27 @@ onMounted(() => {
   flex-direction: column;
   gap: 12px;
   min-height: 200px;
-  padding: 16px;
-  border-radius: 18px;
-  background: rgba(255, 255, 255, 0.04);
-  border: 1px solid rgba(255, 255, 255, 0.07);
+  padding: 18px;
+  border-radius: 20px;
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.98), rgba(246, 250, 255, 0.96));
+  border: 1px solid rgba(198, 214, 231, 0.58);
   cursor: pointer;
-  transition: transform var(--transition-fast), box-shadow var(--transition-fast), border-color var(--transition-fast);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.84),
+    0 12px 24px rgba(168, 188, 212, 0.1);
+  transition:
+    transform var(--transition-fast),
+    box-shadow var(--transition-fast),
+    border-color var(--transition-fast);
 }
 
 .kb-card:hover {
   transform: translateY(-4px);
   border-color: rgba(91, 108, 255, 0.28);
-  box-shadow: var(--shadow-glow);
+  box-shadow:
+    0 20px 36px rgba(156, 178, 204, 0.18),
+    0 0 0 1px rgba(91, 108, 255, 0.08);
 }
 
 .kb-card-header,
@@ -436,20 +483,32 @@ onMounted(() => {
   border-radius: 14px;
   display: grid;
   place-items: center;
-  background: rgba(91, 108, 255, 0.12);
+  background: linear-gradient(135deg, rgba(223, 238, 255, 0.98), rgba(236, 245, 255, 0.98));
   color: var(--primary-strong);
   font-size: 18px;
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.68);
 }
 
 .more-btn {
   width: 32px;
   height: 32px;
-  border: 0;
+  border: 1px solid rgba(203, 217, 234, 0.64);
   border-radius: 10px;
-  background: rgba(255, 255, 255, 0.06);
+  background: rgba(255, 255, 255, 0.94);
+  color: var(--text-secondary);
   display: grid;
   place-items: center;
   cursor: pointer;
+  transition:
+    background var(--transition-fast),
+    color var(--transition-fast),
+    border-color var(--transition-fast);
+}
+
+.more-btn:hover {
+  background: #ffffff;
+  color: var(--text-primary);
+  border-color: rgba(91, 108, 255, 0.24);
 }
 
 .kb-card-body {
@@ -459,6 +518,7 @@ onMounted(() => {
 .kb-card-body h3 {
   font-size: 16px;
   margin-bottom: 6px;
+  color: var(--text-primary);
 }
 
 .kb-card-body p {
@@ -476,24 +536,29 @@ onMounted(() => {
   flex: 1;
   padding: 10px 12px;
   border-radius: 14px;
-  background: rgba(91, 108, 255, 0.12);
+  background: linear-gradient(180deg, rgba(236, 243, 255, 0.96), rgba(245, 249, 255, 0.98));
+  border: 1px solid rgba(201, 217, 235, 0.52);
   display: flex;
   flex-direction: column;
   gap: 6px;
 }
 
 .metric-pill span {
-  color: var(--text-muted);
+  color: var(--text-secondary);
   font-size: 11px;
+  font-weight: 700;
 }
 
 .metric-pill strong {
   font-size: 16px;
+  color: var(--text-primary);
 }
 
 .kb-card-footer {
   color: var(--text-muted);
   font-size: 12px;
+  padding-top: 2px;
+  border-top: 1px solid rgba(227, 236, 246, 0.9);
 }
 
 .kb-card-link {
@@ -510,17 +575,36 @@ onMounted(() => {
   place-items: center;
   text-align: center;
   padding: 20px;
+  color: var(--text-secondary);
 }
 
 .kb-empty h3 {
   font-size: 24px;
   margin: 18px 0 10px;
+  color: var(--text-primary);
 }
 
 .kb-empty p {
   max-width: 420px;
   margin: 0 auto 18px;
   color: var(--text-secondary);
+  line-height: 1.7;
+}
+
+.kb-empty-icon {
+  width: 58px;
+  height: 58px;
+  border-radius: 18px;
+  font-size: 22px;
+}
+
+:deep(.el-dialog__body) {
+  color: var(--text-primary);
+}
+
+:deep(.el-form-item__label) {
+  color: var(--text-primary) !important;
+  font-weight: 700;
 }
 
 @media (max-width: 1100px) {
@@ -541,6 +625,10 @@ onMounted(() => {
 
   .kb-hero h1 {
     font-size: 20px;
+  }
+
+  .kb-board-header h2 {
+    font-size: 16px;
   }
 }
 </style>
