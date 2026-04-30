@@ -5,9 +5,7 @@
         <div class="mcp-hero-copy">
           <span class="soft-chip">MCP Management</span>
           <h1>在一个页面里统一管理 MCP 服务、启动命令和工具暴露情况。</h1>
-          <p>
-            这里会同时显示后端内置的 MCP 配置，以及你从前端新增的自定义 MCP。
-          </p>
+          <p>这里会同时展示后端内置的 MCP 配置，以及你从前端新增的自定义 MCP。</p>
         </div>
 
         <div class="mcp-hero-actions">
@@ -48,9 +46,7 @@
 
         <div v-if="!overview.enabled" class="global-banner warning">
           <el-icon><WarningFilled /></el-icon>
-          <span>
-            当前 `APP_MCP_ENABLED` 处于关闭状态。这里仍然会显示配置，但 MCP 工具不会参与实际调用。
-          </span>
+          <span>当前 `APP_MCP_ENABLED` 处于关闭状态。这里仍然会显示配置，但 MCP 工具不会参与实际调用。</span>
         </div>
 
         <div v-if="servers.length" class="server-list">
@@ -168,116 +164,114 @@
             </div>
 
             <div v-if="isServerExpanded(server.serverId)" class="server-details">
-            <div class="transport-panel">
-              <div class="tool-section-header">
-                <span class="subheading">传输配置</span>
-                <small>{{ server.transportType || 'unknown' }}</small>
-              </div>
+              <div class="transport-panel">
+                <div class="tool-section-header">
+                  <span class="subheading">传输配置</span>
+                  <small>{{ server.transportType || 'unknown' }}</small>
+                </div>
 
-              <div class="server-meta-grid">
-                <div class="meta-item">
-                  <span>服务地址</span>
-                  <strong class="wrap-text">{{ server.baseUrl || '-' }}</strong>
-                </div>
-                <div class="meta-item">
-                  <span>命令</span>
-                  <strong class="wrap-text">{{ server.command || '-' }}</strong>
-                </div>
-                <div class="meta-item">
-                  <span>Args</span>
-                  <strong class="wrap-text">{{ server.args?.length ? server.args.join(' ') : '-' }}</strong>
-                </div>
-                <div class="meta-item">
-                  <span>请求头数量</span>
-                  <strong>{{ server.headerCount }}</strong>
-                </div>
-              </div>
-            </div>
-
-            <div v-if="server.allowedTools && server.allowedTools.length" class="allowed-tools">
-              <span class="subheading">允许的工具</span>
-              <div class="tag-row">
-                <span v-for="toolName in server.allowedTools" :key="toolName" class="tag-chip">
-                  {{ toolName }}
-                </span>
-              </div>
-            </div>
-
-            <div class="process-panel">
-              <div class="tool-section-header">
-                <span class="subheading">本地进程</span>
-                <small>
-                  {{
-                    server.processStatus?.launchConfigured
-                      ? (server.processStatus?.running ? '运行中' : '已配置启动命令')
-                      : '缺少启动命令'
-                  }}
-                </small>
-              </div>
-
-              <div class="server-meta-grid">
-                <div class="meta-item">
-                  <span>PID</span>
-                  <strong>{{ server.processStatus?.pid || '-' }}</strong>
-                </div>
-                <div class="meta-item">
-                  <span>工作目录</span>
-                  <strong class="wrap-text">{{ server.processStatus?.workingDirectory || '-' }}</strong>
-                </div>
-                <div class="meta-item">
-                  <span>退出码</span>
-                  <strong>{{ server.processStatus?.exitCode ?? '-' }}</strong>
-                </div>
-                <div class="meta-item">
-                  <span>可启动</span>
-                  <strong>{{ server.processStatus?.launchConfigured ? '是' : '否' }}</strong>
+                <div class="server-meta-grid">
+                  <div class="meta-item">
+                    <span>服务地址</span>
+                    <strong class="wrap-text">{{ server.baseUrl || '-' }}</strong>
+                  </div>
+                  <div class="meta-item">
+                    <span>命令</span>
+                    <strong class="wrap-text">{{ server.command || '-' }}</strong>
+                  </div>
+                  <div class="meta-item">
+                    <span>Args</span>
+                    <strong class="wrap-text">{{ server.args?.length ? server.args.join(' ') : '-' }}</strong>
+                  </div>
+                  <div class="meta-item">
+                    <span>请求头数量</span>
+                    <strong>{{ server.headerCount }}</strong>
+                  </div>
                 </div>
               </div>
 
-              <div v-if="!server.processStatus?.launchConfigured" class="server-warning neutral">
+              <div v-if="server.allowedTools && server.allowedTools.length" class="allowed-tools">
+                <span class="subheading">允许的工具</span>
+                <div class="tag-row">
+                  <span v-for="toolName in server.allowedTools" :key="toolName" class="tag-chip">
+                    {{ toolName }}
+                  </span>
+                </div>
+              </div>
+
+              <div class="process-panel">
+                <div class="tool-section-header">
+                  <span class="subheading">本地进程</span>
+                  <small>
+                    {{
+                      server.processStatus?.launchConfigured
+                        ? (server.processStatus?.running ? '运行中' : '已配置启动命令')
+                        : '缺少启动命令'
+                    }}
+                  </small>
+                </div>
+
+                <div class="server-meta-grid">
+                  <div class="meta-item">
+                    <span>PID</span>
+                    <strong>{{ server.processStatus?.pid || '-' }}</strong>
+                  </div>
+                  <div class="meta-item">
+                    <span>工作目录</span>
+                    <strong class="wrap-text">{{ server.processStatus?.workingDirectory || '-' }}</strong>
+                  </div>
+                  <div class="meta-item">
+                    <span>退出码</span>
+                    <strong>{{ server.processStatus?.exitCode ?? '-' }}</strong>
+                  </div>
+                  <div class="meta-item">
+                    <span>可启动</span>
+                    <strong>{{ server.processStatus?.launchConfigured ? '是' : '否' }}</strong>
+                  </div>
+                </div>
+
+                <div v-if="!server.processStatus?.launchConfigured" class="server-warning neutral">
+                  <el-icon><InfoFilled /></el-icon>
+                  <span>当前服务还没有可用的启动命令，所以前端只能展示配置，无法直接启动。</span>
+                </div>
+
+                <div v-if="server.processStatus?.launchConfigured" class="launch-command-block">
+                  <span class="subheading">启动命令</span>
+                  <pre>{{ formatLaunchCommand(server.processStatus?.launchCommand) }}</pre>
+                </div>
+
+                <div
+                  v-if="server.processStatus?.recentLogs && server.processStatus.recentLogs.length"
+                  class="launch-command-block"
+                >
+                  <span class="subheading">最近日志</span>
+                  <pre>{{ server.processStatus.recentLogs.join('\n') }}</pre>
+                </div>
+              </div>
+
+              <div v-if="server.errorMessage" class="server-warning">
                 <el-icon><InfoFilled /></el-icon>
-                <span>
-                  当前服务还没有可用的启动命令，所以前端只能展示配置，无法直接启动。
-                </span>
+                <span>{{ server.errorMessage }}</span>
               </div>
 
-              <div v-if="server.processStatus?.launchConfigured" class="launch-command-block">
-                <span class="subheading">启动命令</span>
-                <pre>{{ formatLaunchCommand(server.processStatus?.launchCommand) }}</pre>
-              </div>
+              <div class="tool-section">
+                <div class="tool-section-header">
+                  <span class="subheading">暴露工具</span>
+                  <small>{{ server.toolCount }} 个工具</small>
+                </div>
 
-              <div
-                v-if="server.processStatus?.recentLogs && server.processStatus.recentLogs.length"
-                class="launch-command-block"
-              >
-                <span class="subheading">最近日志</span>
-                <pre>{{ server.processStatus.recentLogs.join('\n') }}</pre>
-              </div>
-            </div>
+                <div v-if="server.tools && server.tools.length" class="tool-grid">
+                  <div v-for="tool in server.tools" :key="`${server.serverId}-${tool.exposedName}`" class="tool-card">
+                    <div class="tool-title">{{ tool.exposedName }}</div>
+                    <div class="tool-remote">{{ tool.remoteName }}</div>
+                    <p>{{ tool.description || '暂未提供工具描述。' }}</p>
+                  </div>
+                </div>
 
-            <div v-if="server.errorMessage" class="server-warning">
-              <el-icon><InfoFilled /></el-icon>
-              <span>{{ server.errorMessage }}</span>
-            </div>
-
-            <div class="tool-section">
-              <div class="tool-section-header">
-                <span class="subheading">暴露工具</span>
-                <small>{{ server.toolCount }} 个工具</small>
-              </div>
-
-              <div v-if="server.tools && server.tools.length" class="tool-grid">
-                <div v-for="tool in server.tools" :key="`${server.serverId}-${tool.exposedName}`" class="tool-card">
-                  <div class="tool-title">{{ tool.exposedName }}</div>
-                  <div class="tool-remote">{{ tool.remoteName }}</div>
-                  <p>{{ tool.description || '暂未提供工具描述。' }}</p>
+                <div v-else class="tool-empty">
+                  <span>当前没有读取到这个 MCP 服务的可用工具。</span>
                 </div>
               </div>
-
-              <div v-else class="tool-empty">
-                <span>当前没有读取到这个 MCP 服务的可用工具。</span>
-              </div>
-            </div>
             </div>
           </article>
         </div>
@@ -568,7 +562,7 @@ async function fetchOverview() {
 async function handleDelete(serverId) {
   try {
     await ElMessageBox.confirm(
-      `确认删除自定义 MCP 服务 "${serverId}" 吗？`,
+      `确认删除自定义 MCP 服务“${serverId}”吗？`,
       '删除 MCP',
       {
         type: 'warning',

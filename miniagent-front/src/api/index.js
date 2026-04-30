@@ -29,6 +29,27 @@ export const kbApi = {
   delete: (kbId) => api.delete(`/kb/${kbId}`),
 }
 
+export const skillApi = {
+  list: () => api.get('/skills'),
+  getDetail: (name) => api.get(`/skills/${name}`),
+  create: (data) => api.post('/skills', data),
+  update: (name, data) => api.put(`/skills/${name}`, data),
+  delete: (name) => api.delete(`/skills/${name}`),
+  execute: (name, data) => api.post(`/skills/${name}/execute`, data),
+  importFile: ({ file, name = '', overwrite = false }) => {
+    const formData = new FormData()
+    formData.append('file', file)
+    if (name) {
+      formData.append('name', name)
+    }
+    formData.append('overwrite', String(overwrite))
+    return api.post('/skills/import', formData, {
+      headers: { 'Content-Type': 'multipart/form-data' }
+    })
+  },
+  reload: () => api.post('/skills/reload'),
+}
+
 // Document APIs
 export const docApi = {
   list: (kbId) => api.get(`/kb/${kbId}/documents`),
@@ -65,6 +86,7 @@ export const chatApi = {
     signal: options.signal
   }),
   getMessages: (sessionId) => api.get(`/chat/sessions/${sessionId}/messages`),
+  getRunDetail: (runId) => api.get(`/chat/runs/${runId}`),
 }
 
 export const mcpApi = {

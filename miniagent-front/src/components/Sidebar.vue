@@ -112,7 +112,7 @@
 import { computed, onMounted, onUnmounted, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { ElMessageBox } from 'element-plus'
-import { ChatLineSquare, Connection, Expand, Fold, Folder, Plus, User } from '@element-plus/icons-vue'
+import { ChatLineSquare, Connection, Expand, Fold, Folder, Plus, Reading, User } from '@element-plus/icons-vue'
 import { clearRecentSessions, listRecentSessions, subscribeRecentSessions } from '@/utils/chatSessions'
 
 defineProps({
@@ -146,6 +146,12 @@ const navItems = [
     label: 'MCP 管理',
     description: '查看服务、工具和连接状态',
     icon: Connection
+  },
+  {
+    path: '/skills',
+    label: 'Skill 管理',
+    description: '查看本地 SKILL.md 与重载状态',
+    icon: Reading
   }
 ]
 

@@ -22,6 +22,11 @@ const router = createRouter({
       path: '/mcp',
       name: 'mcp',
       component: () => import('@/views/McpView.vue')
+    },
+    {
+      path: '/skills',
+      name: 'skills',
+      component: () => import('@/views/SkillView.vue')
     }
   ]
 })

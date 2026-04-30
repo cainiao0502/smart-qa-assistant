@@ -72,6 +72,7 @@ body,
 
 html {
   overflow: hidden;
+  scroll-behavior: smooth;
 }
 
 body {
@@ -88,6 +89,11 @@ input,
 textarea,
 select {
   font: inherit;
+}
+
+button,
+[role='button'] {
+  touch-action: manipulation;
 }
 
 a {
@@ -260,5 +266,20 @@ svg {
   html,
   body {
     overflow: auto;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  html {
+    scroll-behavior: auto;
+  }
+
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
   }
 }

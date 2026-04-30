@@ -1,10 +1,10 @@
-<template>
+﻿<template>
   <section class="kb-page">
     <div class="kb-shell glass-panel">
       <header class="kb-hero">
         <div class="kb-hero-copy">
           <span class="soft-chip">知识库管理中心</span>
-          <h1>把每一个知识库变成一块清晰、可管理的业务资产面板</h1>
+          <h1>把每一个知识库变成清晰、可管理的业务资产面板</h1>
           <p>在这里创建知识库、查看文档规模和索引体量，并快速进入具体文档工作区。</p>
         </div>
         <el-button type="primary" size="large" @click="showCreateDialog = true">
@@ -32,7 +32,7 @@
             <span class="section-heading">全部知识库</span>
             <h2>{{ knowledgeBases.length }} 个知识库正在服务你的问答系统</h2>
           </div>
-          <span class="board-tip">点击卡片可直达文档管理页</span>
+          <span class="board-tip">点击卡片可直接进入文档管理页</span>
         </div>
 
         <div v-if="knowledgeBases.length" class="kb-grid">
@@ -67,8 +67,14 @@
             </div>
 
             <div class="kb-card-body">
-              <h3>{{ kb.name }}</h3>
+              <div class="kb-card-title-row">
+                <h3>{{ kb.name }}</h3>
+                <span v-if="kb.hasIndexAnomaly" class="kb-health-badge">索引异常</span>
+              </div>
               <p>{{ kb.description || '这个知识库还没有补充描述，你可以后续继续完善。' }}</p>
+              <small v-if="kb.hasIndexAnomaly" class="kb-warning-text">
+                有 {{ kb.zeroChunkDocumentCount }} 个文档已显示为已索引，但切片数量为 0，问答可能不稳定。
+              </small>
             </div>
 
             <div class="kb-card-metrics">
@@ -129,7 +135,7 @@
             :autosize="{ minRows: 4, maxRows: 12 }"
             maxlength="5000"
             show-word-limit
-            placeholder="详细描述这个知识库覆盖的主题范围、适用对象、核心文档、业务规则与使用边界，后续检索和管理都会更清晰。"
+            placeholder="详细描述这个知识库覆盖的主题范围、适用对象、核心文档、业务规则与使用边界。"
           />
         </el-form-item>
       </el-form>
@@ -189,7 +195,7 @@ const statsCards = computed(() => [
   {
     label: '文档总量',
     value: totalDocuments.value,
-    description: '已上传并可继续扩充的资料',
+    description: '已上传并可持续扩充的资料',
     icon: Document,
     color: '#119b7f',
     bgColor: 'rgba(30, 200, 165, 0.12)'
@@ -219,14 +225,17 @@ async function fetchKnowledgeBases() {
     const response = await kbApi.list()
     const list = response.data || []
 
-    for (const kb of list) {
+    knowledgeBases.value = await Promise.all(list.map(async (kb) => {
       const docsResponse = await docApi.list(kb.id)
       const docs = docsResponse.data || []
-      kb.documentCount = docs.length
-      kb.chunkCount = docs.reduce((sum, item) => sum + (item.chunkCount || 0), 0)
-    }
-
-    knowledgeBases.value = list
+      return {
+        ...kb,
+        documentCount: docs.length,
+        chunkCount: docs.reduce((sum, item) => sum + (item.chunkCount || 0), 0),
+        zeroChunkDocumentCount: docs.filter((item) => item?.status === 'INDEXED' && (!item.chunkCount || item.chunkCount <= 0)).length,
+        hasIndexAnomaly: docs.some((item) => item?.status === 'INDEXED' && (!item.chunkCount || item.chunkCount <= 0))
+      }
+    }))
   } catch (error) {
     ElMessage.error(error.message || '获取知识库列表失败')
   } finally {
@@ -267,7 +276,7 @@ async function handleCommand(command, kb) {
   if (command === 'delete') {
     try {
       await ElMessageBox.confirm(
-        `删除知识库「${kb.name}」会一并删除其文档与切片数据，确定继续吗？`,
+        `删除知识库“${kb.name}”会一并删除其文档与切片数据，确定继续吗？`,
         '删除知识库',
         {
           type: 'warning',
@@ -515,9 +524,17 @@ onMounted(() => {
   flex: 1;
 }
 
+.kb-card-title-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin-bottom: 6px;
+}
+
 .kb-card-body h3 {
   font-size: 16px;
-  margin-bottom: 6px;
+  margin-bottom: 0;
   color: var(--text-primary);
 }
 
@@ -525,6 +542,25 @@ onMounted(() => {
   color: var(--text-secondary);
   line-height: 1.6;
   font-size: 12px;
+}
+
+.kb-health-badge {
+  display: inline-flex;
+  align-items: center;
+  padding: 3px 9px;
+  border-radius: 999px;
+  background: rgba(245, 158, 11, 0.14);
+  color: #c07a12;
+  font-size: 10px;
+  font-weight: 800;
+}
+
+.kb-warning-text {
+  display: block;
+  margin-top: 8px;
+  color: #b87715;
+  font-size: 11px;
+  line-height: 1.5;
 }
 
 .kb-card-metrics {
@@ -632,3 +668,4 @@ onMounted(() => {
   }
 }
 </style>
+
