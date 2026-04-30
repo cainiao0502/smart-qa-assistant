@@ -5,3 +5,4 @@ uploads/
 miniagent-backend/*.log
 miniagent-front/*.log
 data/mcp/custom-servers.json
+data/skills/readme/

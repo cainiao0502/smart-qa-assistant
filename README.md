@@ -346,6 +346,12 @@ http://localhost:5173
 data/mcp/custom-servers.json
 ```
 
+首次使用时，建议先从模板复制：
+
+```powershell
+Copy-Item data/mcp/custom-servers.example.json data/mcp/custom-servers.json
+```
+
 一个典型的 `stdio` MCP 配置示例：
 
 ```json

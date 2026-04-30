@@ -1,0 +1,37 @@
+{
+  "mcp-server-fetch": {
+    "enabled": true,
+    "type": "stdio",
+    "baseUrl": null,
+    "apiKey": null,
+    "toolNamePrefix": null,
+    "allowedTools": [],
+    "command": "uvx",
+    "args": ["mcp-server-fetch"],
+    "launchCommand": ["uvx", "mcp-server-fetch"],
+    "workingDirectory": null,
+    "headers": {},
+    "environment": {},
+    "stdio": true,
+    "httpLike": false
+  },
+  "minimaxplan": {
+    "enabled": false,
+    "type": "stdio",
+    "baseUrl": null,
+    "apiKey": null,
+    "toolNamePrefix": "minimax",
+    "allowedTools": [],
+    "command": "uvx",
+    "args": ["minimax-coding-plan-mcp", "-y"],
+    "launchCommand": ["uvx", "minimax-coding-plan-mcp", "-y"],
+    "workingDirectory": null,
+    "headers": {},
+    "environment": {
+      "MINIMAX_API_HOST": "https://api.minimaxi.com",
+      "MINIMAX_API_KEY": "replace-with-your-minimax-api-key"
+    },
+    "stdio": true,
+    "httpLike": false
+  }
+}
