@@ -1,1 +1,7 @@
 .env
+.kiro/
+.idea/workspace.xml
+uploads/
+miniagent-backend/*.log
+miniagent-front/*.log
+data/mcp/custom-servers.json
