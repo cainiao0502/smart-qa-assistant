@@ -72,6 +72,7 @@ CREATE TABLE IF NOT EXISTS chat_message (
     id BIGSERIAL PRIMARY KEY,
     session_id VARCHAR(64) NOT NULL,
     kb_id BIGINT NOT NULL REFERENCES knowledge_base(id),
+    run_id VARCHAR(64),
     role VARCHAR(16) NOT NULL,
     content TEXT NOT NULL,
     references_json JSONB,
@@ -88,8 +89,52 @@ DO $$ BEGIN
     END IF;
 END $$;
 
+DO $$ BEGIN
+    IF NOT EXISTS (
+        SELECT 1 FROM information_schema.columns
+        WHERE table_name = 'chat_message' AND column_name = 'run_id'
+    ) THEN
+        ALTER TABLE chat_message ADD COLUMN run_id VARCHAR(64);
+    END IF;
+END $$;
+
 CREATE INDEX IF NOT EXISTS idx_chat_message_session_id ON chat_message(session_id);
 CREATE INDEX IF NOT EXISTS idx_chat_message_kb_id ON chat_message(kb_id);
+CREATE INDEX IF NOT EXISTS idx_chat_message_run_id ON chat_message(run_id);
+
+CREATE TABLE IF NOT EXISTS agent_run (
+    id BIGSERIAL PRIMARY KEY,
+    run_id VARCHAR(64) NOT NULL UNIQUE,
+    session_id VARCHAR(64) NOT NULL,
+    kb_id BIGINT NOT NULL REFERENCES knowledge_base(id),
+    user_goal TEXT NOT NULL,
+    status VARCHAR(32) NOT NULL,
+    final_answer TEXT,
+    created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE INDEX IF NOT EXISTS idx_agent_run_session_id ON agent_run(session_id);
+CREATE INDEX IF NOT EXISTS idx_agent_run_kb_id ON agent_run(kb_id);
+CREATE INDEX IF NOT EXISTS idx_agent_run_status ON agent_run(status);
+
+CREATE TABLE IF NOT EXISTS agent_step (
+    id BIGSERIAL PRIMARY KEY,
+    run_id VARCHAR(64) NOT NULL REFERENCES agent_run(run_id),
+    step_index INT NOT NULL,
+    step_type VARCHAR(32) NOT NULL,
+    tool_name VARCHAR(128),
+    arguments_json JSONB,
+    reason TEXT,
+    observation_summary TEXT,
+    status VARCHAR(32) NOT NULL,
+    duration_ms BIGINT,
+    created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE INDEX IF NOT EXISTS idx_agent_step_run_id ON agent_step(run_id);
+CREATE INDEX IF NOT EXISTS idx_agent_step_status ON agent_step(status);
 
 -- 文档异步入库任务表：每次用户触发文档索引时创建一条记录，用于追踪异步处理的状态和进度
 CREATE TABLE IF NOT EXISTS document_task (
