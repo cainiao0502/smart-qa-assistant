@@ -87,6 +87,8 @@ export const chatApi = {
   }),
   getMessages: (sessionId) => api.get(`/chat/sessions/${sessionId}/messages`),
   getRunDetail: (runId) => api.get(`/chat/runs/${runId}`),
+  listSessions: () => api.get('/chat/sessions'),
+  deleteSession: (sessionId) => api.delete(`/chat/sessions/${sessionId}`),
 }
 
 export const mcpApi = {

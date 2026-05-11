@@ -81,7 +81,7 @@
                 <div class="server-metrics">
                   <div class="metric-chip">
                     <span>类型</span>
-                    <strong>{{ server.transportType || 'unknown' }}</strong>
+                    <strong>{{ transportLabel(server.transportType) }}</strong>
                   </div>
                   <div class="metric-chip">
                     <span>工具数</span>
@@ -167,7 +167,7 @@
               <div class="transport-panel">
                 <div class="tool-section-header">
                   <span class="subheading">传输配置</span>
-                  <small>{{ server.transportType || 'unknown' }}</small>
+                  <small>{{ transportLabel(server.transportType) }}</small>
                 </div>
 
                 <div class="server-meta-grid">
@@ -360,15 +360,17 @@ const createSubmitting = ref(false)
 const editingServerId = ref('')
 const expandedServerIds = ref([])
 const DEFAULT_CONFIG_TEXT = `{
-  "type": "stdio",
-  "command": "npx",
-  "args": [
-    "-y",
-    "@modelcontextprotocol/server-web-search"
-  ],
-  "env": {},
-  "toolNamePrefix": "web"
-}`
+  "type": "streamable-http",
+  "baseUrl": "http://localhost:3000/mcp",
+  "apiKey": "",
+  "toolNamePrefix": ""
+}
+
+// Supported types: "streamable-http" | "sse" | "stdio"
+// SSE example:
+// { "type": "sse", "baseUrl": "http://localhost:3000/sse" }
+// Stdio example:
+// { "type": "stdio", "command": "npx", "args": ["-y", "@modelcontextprotocol/server-web-search"], "toolNamePrefix": "web" }`
 
 const createForm = ref({
   serverId: '',
@@ -448,6 +450,11 @@ function primaryStatusClass(server) {
 function configSwitchText(server) {
   if (!overview.value.enabled) return '全局关闭'
   return server.enabled ? '已启用' : '已禁用'
+}
+
+function transportLabel(type) {
+  const labels = { 'streamable-http': 'Streamable HTTP', 'sse': 'SSE', 'stdio': 'Stdio' }
+  return labels[type] || type || 'unknown'
 }
 
 function formatLaunchCommand(command) {

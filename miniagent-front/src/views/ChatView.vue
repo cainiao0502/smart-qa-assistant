@@ -7,15 +7,39 @@
             <span class="chip-dot"></span>
             智能问答
           </span>
-          <span class="toolbar-desc">基于知识库检索结果生成回答</span>
+          <span class="toolbar-desc">{{ toolbarDescription }}</span>
         </div>
 
         <div class="chat-header-actions">
+          <div class="mode-switch" v-if="!isKnowledgeBaseMode">
+            <button
+              type="button"
+              class="mode-chip"
+              :class="{ active: assistantMode === 'fast' }"
+              @click="assistantMode = 'fast'"
+            >
+              快速对话
+            </button>
+            <button
+              type="button"
+              class="mode-chip"
+              :class="{ active: assistantMode === 'agent' }"
+              @click="assistantMode = 'agent'"
+            >
+              Agent增强
+            </button>
+          </div>
+
           <el-select
             v-model="selectedKbId"
             class="kb-select"
-            placeholder="请选择知识库"
+            placeholder="通用助手（不使用知识库）"
+            clearable
           >
+            <el-option
+              label="通用助手（不使用知识库）"
+              :value="null"
+            />
             <el-option
               v-for="kb in knowledgeBases"
               :key="kb.id"
@@ -26,7 +50,7 @@
 
           <el-button plain class="ghost-btn" @click="toggleRetrievalSettings">
             <el-icon><Operation /></el-icon>
-            检索设置
+            {{ isKnowledgeBaseMode ? '检索设置' : '对话设置' }}
           </el-button>
 
           <el-button plain class="ghost-btn" @click="resetConversation">
@@ -36,99 +60,17 @@
         </div>
       </header>
 
-      <section v-if="showRetrievalSettings" class="retrieval-panel glass-panel">
-        <div class="retrieval-grid">
-          <div class="setting-field">
-            <span class="setting-label">Skill</span>
-            <el-select
-              v-model="selectedSkillNames"
-              multiple
-              collapse-tags
-              collapse-tags-tooltip
-              placeholder="不启用额外 skill"
-            >
-              <el-option
-                v-for="skill in availableSkills"
-                :key="skill.name"
-                :label="skill.title || skill.name"
-                :value="skill.name"
-              >
-                <div class="skill-option-row">
-                  <span class="skill-option-name">{{ skill.title || skill.name }}</span>
-                  <el-tag size="small" :type="skill.executable ? 'success' : 'info'" effect="plain">
-                    {{ skill.executable ? '执行器' : 'Prompt' }}
-                  </el-tag>
-                </div>
-              </el-option>
-            </el-select>
-            <div v-if="availableSkills.length" class="skill-setting-tip">
-              当前可选 {{ availableSkills.length }} 个 skill，其中 {{ executableSkillCount }} 个可直接作为执行器使用。</div>
-          </div>
-
-          <div class="setting-field">
-            <span class="setting-label">TopK</span>
-            <el-input-number v-model="retrievalOptions.topK" :min="1" :max="20" />
-          </div>
-
-          <div class="setting-field">
-            <span class="setting-label">相似度阈值</span>
-            <div class="setting-inline">
-              <el-slider v-model="retrievalOptions.scoreThreshold" :min="0" :max="1" :step="0.05" />
-              <span class="setting-value">{{ retrievalOptions.scoreThreshold.toFixed(2) }}</span>
-            </div>
-          </div>
-
-          <div class="setting-field">
-            <span class="setting-label">文档类型过滤</span>
-            <el-select
-              v-model="retrievalOptions.fileTypes"
-              multiple
-              collapse-tags
-              collapse-tags-tooltip
-              placeholder="不过滤文档类型"
-            >
-              <el-option
-                v-for="type in fileTypeOptions"
-                :key="type"
-                :label="type.toUpperCase()"
-                :value="type"
-              />
-            </el-select>
-          </div>
-
-          <div class="setting-field">
-            <span class="setting-label">文档名称关键词</span>
-            <el-input
-              v-model="retrievalOptions.documentNameKeyword"
-              placeholder="例如：guide、部署、FAQ"
-              clearable
-            />
-          </div>
-
-          <div class="setting-field setting-field-full">
-            <span class="setting-label">指定文档范围</span>
-            <el-select
-              v-model="retrievalOptions.documentIds"
-              multiple
-              collapse-tags
-              collapse-tags-tooltip
-              placeholder="默认检索当前知识库全部文档"
-            >
-              <el-option
-                v-for="doc in availableDocuments"
-                :key="doc.id"
-                :label="doc.name"
-                :value="doc.id"
-              />
-            </el-select>
-          </div>
-        </div>
-
-        <div class="retrieval-actions">
-          <span class="setting-tip">这些设置只影响当前会话后续提问，不会修改知识库数据。</span>
-          <el-button text @click="resetRetrievalOptions">恢复默认</el-button>
-        </div>
-      </section>
+      <RetrievalSettings
+        :visible="showRetrievalSettings"
+        :retrieval-options="retrievalOptions"
+        @update:retrieval-options="retrievalOptions = $event"
+        v-model:selected-skill-names="selectedSkillNames"
+        :available-skills="availableSkills"
+        :available-documents="availableDocuments"
+        :is-knowledge-base-mode="isKnowledgeBaseMode"
+        :selected-kb-id="selectedKbId"
+        @reset="resetRetrievalOptions"
+      />
 
       <main ref="messagesContainer" class="chat-main">
         <section v-if="!messages.length && !isLoading" class="chat-empty">
@@ -144,7 +86,7 @@
           </div>
 
           <h2>今天我能帮你完成什么？</h2>
-          <p>输入你的问题后，我会结合知识库检索片段给出回答，并保留会话上下文。</p>
+          <p>不选知识库时可在快速对话和 Agent 增强之间切换；选择知识库后会自动进入知识库问答。</p>
 
           <div class="quick-prompts">
             <button
@@ -541,277 +483,27 @@
         </button>
       </main>
 
-      <footer class="chat-input-wrap">
-        <div class="chat-input-card glass-panel">
-          <div class="chat-input-meta">
-            <div class="chat-input-hints">
-              <span class="hint-badge">RAG 检索增强</span>
-              <span class="hint-badge">{{ currentKnowledgeBaseName || '等待选择知识库' }}</span>
-              <span v-if="selectedSkillNames.length" class="hint-badge">
-                Skill {{ selectedSkillNames.length }} / 执行器 {{ selectedExecutableSkillCount }}
-              </span>
-              <span class="hint-badge">TopK {{ retrievalOptions.topK }}</span>
-              <span class="hint-badge">阈值 {{ retrievalOptions.scoreThreshold.toFixed(2) }}</span>
-            </div>
-            <span class="chat-session-tag">
-              {{ sessionId ? `会话 ${sessionId.slice(-6)}` : '新会话' }}
-            </span>
-          </div>
-
-          <div class="composer-box">
-            <el-input
-              v-model="question"
-              type="textarea"
-              :rows="1"
-              :autosize="{ minRows: 2, maxRows: 6 }"
-              resize="none"
-              placeholder="例如：总结这个知识库里与部署步骤、接口说明和常见异常相关的核心要点。"
-              @keydown.enter.exact.prevent="sendMessage"
-            />
-
-            <div class="composer-actions">
-              <transition name="fade-slide" mode="out-in">
-                <el-button
-                  v-if="isLoading"
-                  key="stop"
-                  class="send-btn send-btn-inside stop-btn"
-                  @click="stopGenerating"
-                >
-                  <el-icon><CloseBold /></el-icon>
-                  停止生成
-                </el-button>
-                <el-button
-                  v-else
-                  key="send"
-                  type="primary"
-                  class="send-btn send-btn-inside"
-                  :disabled="!question.trim() || !selectedKbId"
-                  @click="sendMessage"
-                >
-                  <el-icon><Promotion /></el-icon>
-                  发送消息
-                </el-button>
-              </transition>
-            </div>
-          </div>
-        </div>
-      </footer>
+      <ChatInput
+        :question="question"
+        @update:question="question = $event"
+        :is-loading="isLoading"
+        :assistant-mode="assistantMode"
+        :is-knowledge-base-mode="isKnowledgeBaseMode"
+        :current-knowledge-base-name="currentKnowledgeBaseName"
+        :selected-skill-names="selectedSkillNames"
+        :selected-executable-skill-count="selectedExecutableSkillCount"
+        :retrieval-options="retrievalOptions"
+        :session-id="sessionId"
+        @send="sendMessage"
+        @stop="stopGenerating"
+      />
     </div>
 
-    <el-dialog
-      v-model="runDetailDialogVisible"
-      title="运行详情"
-      width="760px"
-      class="run-detail-dialog"
-      destroy-on-close
-    >
-      <div v-if="runDetailLoading" class="run-detail-loading">
-        <el-skeleton :rows="6" animated />
-      </div>
-
-      <div v-else-if="runDetail" class="run-detail-body">
-        <div class="run-detail-meta">
-          <div class="run-detail-meta-row">
-            <span class="run-detail-label">Run ID</span>
-            <div class="run-detail-code-row">
-              <code class="run-detail-code">{{ runDetail.runId }}</code>
-              <button type="button" class="mini-copy-btn" @click="copyRunId(runDetail.runId)">复制</button>
-            </div>
-          </div>
-          <div class="run-detail-meta-row">
-            <span class="run-detail-label">状态</span>
-            <span class="tool-badge" :class="getToolStatusClass(runDetail.status)">
-              {{ formatToolStatus(runDetail.status) }}
-            </span>
-          </div>
-          <div class="run-detail-meta-row">
-            <span class="run-detail-label">会话</span>
-            <span>{{ runDetail.sessionId }}</span>
-          </div>
-          <div class="run-detail-meta-row">
-            <span class="run-detail-label">知识库</span>
-            <span>{{ runDetail.kbId }}</span>
-          </div>
-        </div>
-
-        <div class="run-detail-section">
-          <span class="run-detail-section-title">用户目标</span>
-          <div class="run-detail-text">{{ runDetail.userGoal || '—' }}</div>
-        </div>
-
-        <div class="run-detail-section">
-          <div class="agent-step-header run-detail-steps-header">
-            <div class="execution-bubble-meta-left">
-              <span>任务清单</span>
-            </div>
-            <div class="execution-bubble-meta-right">
-              <small>{{ getExecutionProgressMeta(runDetail).summary }}</small>
-              <button
-                type="button"
-                class="execution-collapse-btn"
-                @click="toggleExecutionPanel(runDetail)"
-              >
-                {{ isExecutionPanelExpanded(runDetail) ? '收起' : '展开' }}
-              </button>
-            </div>
-          </div>
-          <template v-if="isExecutionPanelExpanded(runDetail)">
-          <div class="execution-progress-strip run-detail-progress-strip">
-            <div class="execution-progress-copy">
-              <strong>{{ getExecutionProgressMeta(runDetail).headline }}</strong>
-              <small>{{ getExecutionProgressMeta(runDetail).subline }}</small>
-            </div>
-            <div class="execution-progress-bar">
-              <span class="execution-progress-bar-fill" :style="{ width: `${getExecutionProgressMeta(runDetail).ratio}%` }"></span>
-            </div>
-          </div>
-          <div class="execution-current-task run-detail-current-task" v-if="getCurrentExecutionTask(runDetail)">
-            <span class="execution-current-label">当前焦点</span>
-            <strong>{{ getCurrentExecutionTask(runDetail).title }}</strong>
-            <small>{{ getCurrentExecutionTask(runDetail).subtitle }}</small>
-          </div>
-          <div class="execution-task-list run-detail-task-list">
-            <div
-              v-for="task in buildExecutionTasks(runDetail)"
-              :key="task.key"
-              class="execution-task-item"
-              :class="[
-                `status-${String(task.status || '').toLowerCase()}`,
-                { current: isCurrentExecutionTask(runDetail, task) }
-              ]"
-            >
-              <div class="execution-task-index">{{ task.order }}</div>
-              <div class="execution-task-main">
-                <div class="execution-task-top">
-                  <div class="execution-task-copy">
-                    <div class="execution-task-title-row">
-                      <strong>{{ task.title }}</strong>
-                      <span v-if="task.planOrigin === 'appended'" class="task-origin-badge">执行中补充</span>
-                    </div>
-                    <span v-if="task.subtitle" class="execution-task-subtitle">{{ task.subtitle }}</span>
-                  </div>
-                  <div class="agent-step-badges">
-                    <span class="tool-badge" :class="getToolStatusClass(task.status)">
-                      {{ formatToolStatus(task.status) }}
-                    </span>
-                    <span v-if="task.durationMs !== undefined && task.durationMs !== null" class="tool-badge">
-                      {{ task.durationMs }}ms
-                    </span>
-                  </div>
-                </div>
-                <span v-if="task.detail" class="agent-step-summary">{{ task.detail }}</span>
-                <pre
-                  v-if="task.arguments && Object.keys(task.arguments).length"
-                  class="tool-arguments run-detail-arguments"
-                >{{ formatToolArguments(task.arguments) }}</pre>
-                <div v-if="task.toolCalls && task.toolCalls.length" class="task-tool-tree">
-                  <div class="task-tool-tree-header">
-                    <span>关联工具</span>
-                    <small>{{ task.toolCalls.length }} 次调用</small>
-                  </div>
-                  <div class="task-tool-tree-list">
-                    <div v-for="(toolCall, toolIndex) in task.toolCalls" :key="`${task.key}-detail-tool-${toolIndex}`" class="task-tool-tree-item">
-                      <div class="tool-top">
-                        <div class="tool-title-block">
-                          <strong>{{ formatToolHeadline(toolCall) }}</strong>
-                          <span class="tool-subtitle">{{ formatToolSubtitle(toolCall) }}</span>
-                        </div>
-                        <div class="tool-badges">
-                          <span class="tool-badge" :class="getToolStatusClass(toolCall.status)">
-                            {{ formatToolStatus(toolCall.status) }}
-                          </span>
-                          <span v-if="toolCall.durationMs" class="tool-badge">{{ toolCall.durationMs }}ms</span>
-                        </div>
-                      </div>
-                      <span v-if="toolCall.summary" class="tool-summary">{{ toolCall.summary }}</span>
-                      <pre v-if="toolCall.arguments && Object.keys(toolCall.arguments).length" class="tool-arguments">{{ formatToolArguments(toolCall.arguments) }}</pre>
-                    </div>
-                  </div>
-                </div>
-                <div v-if="task.rawSteps && task.rawSteps.length" class="task-raw-step-block">
-                  <button
-                    type="button"
-                    class="task-raw-step-toggle"
-                    @click="toggleTaskRawSteps(runDetail, task.key)"
-                  >
-                    <span>{{ isTaskRawStepsExpanded(runDetail, task.key) ? '收起原始步骤' : '查看原始步骤' }}</span>
-                    <small>{{ task.rawSteps.length }} 条</small>
-                  </button>
-                  <div v-if="isTaskRawStepsExpanded(runDetail, task.key)" class="task-raw-step-list">
-                    <div
-                      v-for="(step, stepIndex) in task.rawSteps"
-                      :key="`${task.key}-detail-raw-${step.stepIndex || stepIndex}`"
-                      class="agent-step-item task-raw-step-item"
-                    >
-                      <div class="agent-step-top">
-                        <div class="agent-step-title-block">
-                          <strong>步骤 {{ step.stepIndex || (stepIndex + 1) }}</strong>
-                          <span class="agent-step-subtitle">{{ formatAgentStepLabel(step) }}</span>
-                        </div>
-                        <div class="agent-step-badges">
-                          <span class="tool-badge" :class="getToolStatusClass(step.status)">
-                            {{ formatToolStatus(step.status) }}
-                          </span>
-                          <span v-if="step.durationMs !== undefined && step.durationMs !== null" class="tool-badge">
-                            {{ step.durationMs }}ms
-                          </span>
-                        </div>
-                      </div>
-                      <span v-if="step.reason" class="agent-step-reason">{{ step.reason }}</span>
-                      <span v-if="step.observationSummary" class="agent-step-summary">{{ step.observationSummary }}</span>
-                    </div>
-                  </div>
-                </div>
-              </div>
-            </div>
-          </div>
-          </template>
-        </div>
-
-        <div class="run-detail-section">
-          <div class="agent-step-header run-detail-steps-header">
-            <span>原始执行步骤</span>
-            <small>{{ runDetail.steps?.length || 0 }} 个步骤</small>
-          </div>
-          <div class="agent-step-list run-detail-step-list">
-            <div
-              v-for="(step, stepIndex) in (runDetail.steps || [])"
-              :key="`${step.stepIndex || stepIndex}-${step.stepType || 'step'}`"
-              class="agent-step-item"
-            >
-              <div class="agent-step-top">
-                <div class="agent-step-title-block">
-                  <strong>步骤 {{ step.stepIndex || (stepIndex + 1) }}</strong>
-                  <span class="agent-step-subtitle">{{ formatAgentStepLabel(step) }}</span>
-                </div>
-                <div class="agent-step-badges">
-                  <span class="tool-badge" :class="getToolStatusClass(step.status)">
-                    {{ formatToolStatus(step.status) }}
-                  </span>
-                  <span v-if="step.durationMs !== undefined && step.durationMs !== null" class="tool-badge">
-                    {{ step.durationMs }}ms
-                  </span>
-                </div>
-              </div>
-              <span v-if="step.reason" class="agent-step-reason">{{ step.reason }}</span>
-              <span v-if="step.observationSummary" class="agent-step-summary">{{ step.observationSummary }}</span>
-              <pre
-                v-if="step.arguments && Object.keys(step.arguments).length"
-                class="tool-arguments run-detail-arguments"
-              >{{ formatToolArguments(step.arguments) }}</pre>
-            </div>
-          </div>
-        </div>
-
-        <div class="run-detail-section">
-          <span class="run-detail-section-title">最终回答</span>
-          <div
-            class="run-detail-answer"
-            v-html="renderMarkdown(runDetail.finalAnswer || '暂无最终回答')"
-          ></div>
-        </div>
-      </div>
-    </el-dialog>
+    <RunDetailDialog
+      v-model:visible="runDetailDialogVisible"
+      :loading="runDetailLoading"
+      :detail="runDetail"
+    />
   </section>
 </template>
 
@@ -820,13 +512,17 @@ import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
 import { chatApi, docApi, kbApi, skillApi } from '@/api'
+import RunDetailDialog from '@/components/RunDetailDialog.vue'
+import RetrievalSettings from '@/components/RetrievalSettings.vue'
+import ChatInput from '@/components/ChatInput.vue'
+import { useExecutionTasks } from '@/composables/useExecutionTasks'
+import { useMarkdownRenderer } from '@/composables/useMarkdownRenderer'
 import { removeRecentSession, upsertRecentSession } from '@/utils/chatSessions'
 import {
   CloseBold,
   CopyDocument,
   Delete,
   Operation,
-  Promotion,
   Select,
   User
 } from '@element-plus/icons-vue'
@@ -845,6 +541,7 @@ const router = useRouter()
 const question = ref('')
 const isLoading = ref(false)
 const selectedKbId = ref(null)
+const assistantMode = ref('fast')
 const selectedSkillNames = ref([])
 const availableSkills = ref([])
 const knowledgeBases = ref([])
@@ -864,8 +561,26 @@ const retrievalOptions = ref(DEFAULT_RETRIEVAL_OPTIONS())
 const runDetailDialogVisible = ref(false)
 const runDetailLoading = ref(false)
 const runDetail = ref(null)
-const rawStepExpandState = ref({})
-const executionPanelExpandState = ref({})
+
+const {
+  buildExecutionTasks,
+  getExecutionProgressMeta,
+  getCurrentExecutionTask,
+  isCurrentExecutionTask,
+  getExecutionOrphanTools,
+  isExecutionPanelExpanded,
+  toggleExecutionPanel,
+  isTaskRawStepsExpanded,
+  toggleTaskRawSteps,
+  getToolStatusClass,
+  formatToolStatus,
+  formatToolArguments,
+  formatToolHeadline,
+  formatToolSubtitle,
+  formatAgentStepLabel,
+  shortRunId,
+  sortAgentSteps
+} = useExecutionTasks()
 const STREAM_CONNECT_TIMEOUT_MS = 30000
 const STREAM_IDLE_TIMEOUT_MS = 600000
 const SESSION_SYNC_DELAY_MS = 180
@@ -879,7 +594,17 @@ const exampleQuestions = [
 ]
 
 const currentKnowledgeBaseName = computed(() => {
-  return knowledgeBases.value.find((item) => item.id === selectedKbId.value)?.name || ''
+  return knowledgeBases.value.find((item) => item.id === selectedKbId.value)?.name || '通用助手'
+})
+const isKnowledgeBaseMode = computed(() => selectedKbId.value !== null && selectedKbId.value !== undefined)
+const isAgentEnhancedMode = computed(() => isKnowledgeBaseMode.value || assistantMode.value === 'agent')
+const toolbarDescription = computed(() => {
+  if (isKnowledgeBaseMode.value) {
+    return '基于知识库检索结果生成回答'
+  }
+  return assistantMode.value === 'agent'
+    ? '通用助手 · Agent 增强模式'
+    : '通用助手 · 快速对话模式'
 })
 
 const executableSkillCount = computed(() => {
@@ -893,106 +618,17 @@ const selectedExecutableSkillCount = computed(() => {
 
 const streamingMessageHasContent = computed(() => Boolean(streamingMessage.value?.content))
 const showScrollToBottom = computed(() => !autoScrollEnabled.value && messages.value.length > 0)
-const markdownRendererVersion = ref(0)
-const markdownCache = new Map()
-const executionTaskCache = new WeakMap()
-let markedInstance = null
-let highlightInstance = null
-let markdownInitPromise = null
+
+const {
+  initializeMarkdownRenderer,
+  renderMarkdown,
+  renderStreamMarkdown
+} = useMarkdownRenderer()
 let sessionSyncTimer = 0
 let scrollStateFrame = 0
-const HIGHLIGHT_LANGUAGE_LOADERS = [
-  ['bash', () => import('highlight.js/lib/languages/bash')],
-  ['java', () => import('highlight.js/lib/languages/java')],
-  ['javascript', () => import('highlight.js/lib/languages/javascript')],
-  ['json', () => import('highlight.js/lib/languages/json')],
-  ['kotlin', () => import('highlight.js/lib/languages/kotlin')],
-  ['markdown', () => import('highlight.js/lib/languages/markdown')],
-  ['plaintext', () => import('highlight.js/lib/languages/plaintext')],
-  ['python', () => import('highlight.js/lib/languages/python')],
-  ['sql', () => import('highlight.js/lib/languages/sql')],
-  ['typescript', () => import('highlight.js/lib/languages/typescript')],
-  ['xml', () => import('highlight.js/lib/languages/xml')],
-  ['yaml', () => import('highlight.js/lib/languages/yaml')]
-]
 
 function generateSessionId() {
   return `sess_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`
-}
-
-function escapeHtml(value) {
-  return String(value)
-    .replaceAll('&', '&amp;')
-    .replaceAll('<', '&lt;')
-    .replaceAll('>', '&gt;')
-    .replaceAll('"', '&quot;')
-    .replaceAll("'", '&#39;')
-}
-
-async function initializeMarkdownRenderer() {
-  if (markdownInitPromise) {
-    return markdownInitPromise
-  }
-
-  markdownInitPromise = Promise.all([
-    import('marked'),
-    import('highlight.js/lib/core'),
-    ...HIGHLIGHT_LANGUAGE_LOADERS.map(([, loader]) => loader()),
-    import('highlight.js/styles/github.css')
-  ])
-    .then(([markedModule, hljsModule, ...loadedModules]) => {
-      markedInstance = markedModule.marked
-      highlightInstance = hljsModule.default
-      HIGHLIGHT_LANGUAGE_LOADERS.forEach(([name], index) => {
-        highlightInstance.registerLanguage(name, loadedModules[index].default)
-      })
-      markedInstance.setOptions({
-        breaks: true,
-        highlight(code, language) {
-          if (language && highlightInstance?.getLanguage(language)) {
-            return highlightInstance.highlight(code, { language }).value
-          }
-          return highlightInstance?.highlightAuto(code).value || escapeHtml(code)
-        }
-      })
-      markdownCache.clear()
-      markdownRendererVersion.value += 1
-    })
-    .catch((error) => {
-      markdownInitPromise = null
-      throw error
-    })
-
-  return markdownInitPromise
-}
-
-function renderMarkdownWithCache(content) {
-  if (!content) {
-    return ''
-  }
-  const cacheKey = `${markdownRendererVersion.value}:${content}`
-  if (markdownCache.has(cacheKey)) {
-    return markdownCache.get(cacheKey)
-  }
-  const html = markedInstance
-    ? markedInstance.parse(content)
-    : escapeHtml(content).replace(/\n/g, '<br>')
-  markdownCache.set(cacheKey, html)
-  if (markdownCache.size > 80) {
-    const oldestKey = markdownCache.keys().next().value
-    markdownCache.delete(oldestKey)
-  }
-  return html
-}
-
-function renderMarkdown(content) {
-  return renderMarkdownWithCache(content)
-}
-
-function renderStreamMarkdown(content) {
-  if (!content) return ''
-  const html = renderMarkdownWithCache(content)
-  return html + '<span class="stream-cursor"></span>'
 }
 
 function formatScore(score) {
@@ -1092,102 +728,6 @@ function hasAgentSteps(message) {
   return Array.isArray(message.agentSteps) && message.agentSteps.length > 0
 }
 
-function extractPlanPayloadFromSteps(steps) {
-  const orderedSteps = sortAgentSteps(steps || [])
-  for (let index = orderedSteps.length - 1; index >= 0; index--) {
-    const step = orderedSteps[index]
-    if (step?.stepType !== 'plan' || !step.arguments) {
-      continue
-    }
-    return step.arguments
-  }
-  return null
-}
-
-function extractPlanPayloadsFromSteps(steps) {
-  return sortAgentSteps(steps || [])
-    .filter((step) => step?.stepType === 'plan' && step.arguments)
-    .map((step) => step.arguments)
-}
-
-function getSourcePlan(source) {
-  const mergedTasks = []
-  const indexByKey = new Map()
-  const appendTasks = (tasks, appended = false) => {
-    if (!Array.isArray(tasks)) {
-      return
-    }
-    tasks.forEach((task, taskIndex) => {
-      if (!task || typeof task !== 'object') {
-        return
-      }
-      const normalizedTask = {
-        key: task.key || `task-${mergedTasks.length + taskIndex + 1}`,
-        title: task.title || '',
-        description: task.description || '',
-        planOrigin: appended ? 'appended' : 'initial'
-      }
-      const existingIndex = indexByKey.get(normalizedTask.key)
-      if (existingIndex === undefined) {
-        indexByKey.set(normalizedTask.key, mergedTasks.length)
-        mergedTasks.push(normalizedTask)
-        return
-      }
-      const previous = mergedTasks[existingIndex]
-      mergedTasks[existingIndex] = {
-        ...previous,
-        title: normalizedTask.title || previous.title,
-        description: normalizedTask.description || previous.description,
-        planOrigin: previous.planOrigin || normalizedTask.planOrigin
-      }
-    })
-  }
-
-  extractPlanPayloadsFromSteps(source?.agentSteps || source?.steps || []).forEach((payload, payloadIndex) => {
-    appendTasks(payload?.tasks, payloadIndex > 0)
-  })
-
-  if (Array.isArray(source?.agentPlan) && source.agentPlan.length) {
-    appendTasks(source.agentPlan, mergedTasks.length > 0)
-  }
-
-  if (mergedTasks.length) {
-    return mergedTasks
-  }
-  const planPayload = extractPlanPayloadFromSteps(source?.agentSteps || source?.steps || [])
-  return Array.isArray(planPayload?.tasks) ? planPayload.tasks : []
-}
-
-function getSourceCurrentActionKey(source) {
-  if (source?.currentActionKey) {
-    return source.currentActionKey
-  }
-  const steps = sortAgentSteps(source?.agentSteps || source?.steps || [])
-  for (let index = steps.length - 1; index >= 0; index--) {
-    const taskKey = steps[index]?.arguments?.taskKey
-    if (typeof taskKey === 'string' && taskKey) {
-      return taskKey
-    }
-  }
-  const planPayload = extractPlanPayloadFromSteps(steps)
-  return typeof planPayload?.currentActionKey === 'string' ? planPayload.currentActionKey : ''
-}
-
-function getSourceCompletedTaskKeys(source) {
-  if (Array.isArray(source?.completedTaskKeys) && source.completedTaskKeys.length) {
-    return source.completedTaskKeys.filter((item) => typeof item === 'string' && item)
-  }
-  return []
-}
-
-function sortAgentSteps(steps) {
-  return [...steps].sort((left, right) => {
-    const leftIndex = left?.stepIndex ?? 0
-    const rightIndex = right?.stepIndex ?? 0
-    return leftIndex - rightIndex
-  })
-}
-
 function upsertAgentStep(message, stepPayload) {
   if (!message || !stepPayload || typeof stepPayload !== 'object') {
     return
@@ -1240,482 +780,6 @@ function applyAgentPlan(message, payload) {
   if (Array.isArray(payload.completedTaskKeys)) {
     message.completedTaskKeys = payload.completedTaskKeys.filter((item) => typeof item === 'string' && item)
   }
-}
-
-function getToolStatusClass(status) {
-  return {
-    SUCCESS: 'success',
-    RUNNING: 'warning',
-    FAILED: 'danger',
-    PARTIAL: 'warning',
-    UNFINISHED: 'info',
-    PENDING: 'info'
-  }[status] || 'info'
-}
-
-function formatToolStatus(status) {
-  return {
-    SUCCESS: '成功',
-    RUNNING: '执行中',
-    FAILED: '失败',
-    PARTIAL: '已执行未收尾',
-    UNFINISHED: '未完成',
-    PENDING: '待执行'
-  }[status] || (status || '未知')
-}
-
-function formatToolArguments(argumentsObject) {
-  return JSON.stringify(argumentsObject, null, 2)
-}
-
-function formatToolHeadline(toolCall) {
-  const source = toolCall?.source || ''
-  if (source.startsWith('mcp:')) {
-    return `已调用 MCP · ${source.slice(4)}`
-  }
-  return `已调用工具 · ${toolCall?.displayName || toolCall?.toolName || 'unknown'}`
-}
-
-function formatToolSubtitle(toolCall) {
-  const source = toolCall?.source || ''
-  if (source.startsWith('mcp:')) {
-    return toolCall?.displayName || toolCall?.toolName || source.slice(4)
-  }
-  return source || 'builtin'
-}
-
-function getExecutionSourceId(source) {
-  return source?.runId || source?.createdAt || source?.userGoal || 'execution'
-}
-
-function getTaskExpandStateKey(source, taskKey) {
-  return `${getExecutionSourceId(source)}:${taskKey}`
-}
-
-function getExecutionPanelStateKey(source) {
-  return `${getExecutionSourceId(source)}:panel`
-}
-
-function isExecutionPanelExpanded(source) {
-  if (!source || typeof source !== 'object') {
-    return false
-  }
-  const stateKey = getExecutionPanelStateKey(source)
-  const stored = executionPanelExpandState.value[stateKey]
-  return stored === undefined ? false : Boolean(stored)
-}
-
-function toggleExecutionPanel(source) {
-  const stateKey = getExecutionPanelStateKey(source)
-  executionPanelExpandState.value = {
-    ...executionPanelExpandState.value,
-    [stateKey]: !isExecutionPanelExpanded(source)
-  }
-}
-
-function isTaskRawStepsExpanded(source, taskKey) {
-  return Boolean(rawStepExpandState.value[getTaskExpandStateKey(source, taskKey)])
-}
-
-function toggleTaskRawSteps(source, taskKey) {
-  const stateKey = getTaskExpandStateKey(source, taskKey)
-  rawStepExpandState.value = {
-    ...rawStepExpandState.value,
-    [stateKey]: !rawStepExpandState.value[stateKey]
-  }
-}
-
-function buildTaskToolBuckets(source, tasks, steps) {
-  const toolCalls = Array.isArray(source?.toolCalls) ? [...source.toolCalls] : []
-  const taskBuckets = new Map()
-  const orphanTools = []
-
-  for (const task of tasks) {
-    taskBuckets.set(task.key, [])
-  }
-
-  let toolCursor = 0
-  const nextMatchingToolCall = (step) => {
-    for (let index = toolCursor; index < toolCalls.length; index++) {
-      const candidate = toolCalls[index]
-      const candidateTaskKey = candidate?.arguments?.taskKey
-      const stepTaskKey = step?.arguments?.taskKey
-      const taskMatches = candidateTaskKey && stepTaskKey
-        ? candidateTaskKey === stepTaskKey
-        : true
-      const toolMatches = !step?.toolName || !candidate?.toolName || step.toolName === candidate.toolName
-      if (taskMatches && toolMatches) {
-        toolCursor = index + 1
-        return candidate
-      }
-    }
-    return null
-  }
-
-  for (const step of steps) {
-    if (step?.stepType !== 'tool_call') {
-      continue
-    }
-    const matchedToolCall = nextMatchingToolCall(step)
-    if (!matchedToolCall) {
-      continue
-    }
-    const taskKey = step?.arguments?.taskKey
-    if (taskKey && taskBuckets.has(taskKey)) {
-      taskBuckets.get(taskKey).push(matchedToolCall)
-    } else {
-      orphanTools.push(matchedToolCall)
-    }
-  }
-
-  for (; toolCursor < toolCalls.length; toolCursor++) {
-    orphanTools.push(toolCalls[toolCursor])
-  }
-
-  return { taskBuckets, orphanTools }
-}
-
-function formatAgentStepLabel(step) {
-  if (!step) {
-    return '未知步骤'
-  }
-
-  if (step.stepType === 'tool_call') {
-    return step.toolName ? `调用工具 · ${step.toolName}` : '调用工具'
-  }
-  if (step.stepType === 'plan') {
-    return '生成任务计划'
-  }
-  if (step.stepType === 'finish') {
-    return '结束并生成回答'
-  }
-  if (step.stepType === 'respond_with_gap') {
-    return '结束并说明信息缺口'
-  }
-  return step.stepType || '步骤'
-}
-
-function formatExecutionTaskTitle(step) {
-  if (!step) {
-    return '未知任务'
-  }
-  if (step.stepType === 'tool_call') {
-    return step.toolName ? `调用工具 ${step.toolName}` : '调用工具补充信息'
-  }
-  if (step.stepType === 'finish') {
-    return '整理结论并生成最终回答'
-  }
-  if (step.stepType === 'respond_with_gap') {
-    return '说明信息缺口并结束本轮'
-  }
-  return formatAgentStepLabel(step)
-}
-
-function resolveExecutionStatus(source) {
-  if (source?.runStatus) {
-    return source.runStatus
-  }
-  if (source?.status) {
-    return source.status
-  }
-  if (source?.content || source?.finalAnswer) {
-    return 'SUCCESS'
-  }
-  return 'RUNNING'
-}
-
-function buildExecutionTaskCacheSignature(source, steps, explicitPlan, currentActionKey, completedTaskKeys, executionStatus, finalContent) {
-  const stepSignature = steps.map((step) => [
-    step?.stepIndex ?? '',
-    step?.stepType ?? '',
-    step?.toolName ?? '',
-    step?.status ?? '',
-    step?.durationMs ?? '',
-    step?.arguments?.taskKey ?? ''
-  ].join(':')).join('|')
-  const planSignature = explicitPlan.map((task) => [
-    task?.key ?? '',
-    task?.title ?? '',
-    task?.description ?? ''
-  ].join(':')).join('|')
-  const completedSignature = Array.from(completedTaskKeys).join('|')
-  return [
-    source?.runId ?? '',
-    source?.status ?? '',
-    source?.runStatus ?? '',
-    executionStatus,
-    currentActionKey ?? '',
-    completedSignature,
-    finalContent ? '1' : '0',
-    planSignature,
-    stepSignature
-  ].join('~')
-}
-
-function buildExecutionTasks(source) {
-  if (!source || typeof source !== 'object') {
-    return []
-  }
-
-  const steps = sortAgentSteps(source?.agentSteps || source?.steps || [])
-  const explicitPlan = getSourcePlan(source)
-  const currentActionKey = getSourceCurrentActionKey(source)
-  const completedTaskKeys = new Set(getSourceCompletedTaskKeys(source))
-  const executionStatus = resolveExecutionStatus(source)
-  const finalContent = source?.content || source?.finalAnswer || ''
-  const rawActionSteps = steps.filter((step) => step?.stepType !== 'plan')
-  const cacheSignature = buildExecutionTaskCacheSignature(
-    source,
-    steps,
-    explicitPlan,
-    currentActionKey,
-    completedTaskKeys,
-    executionStatus,
-    finalContent
-  )
-  const cached = executionTaskCache.get(source)
-
-  if (cached?.signature === cacheSignature && Array.isArray(cached.tasks)) {
-    return cached.tasks
-  }
-
-  if (explicitPlan.length) {
-    const currentTaskIndex = explicitPlan.findIndex((task) => task?.key === currentActionKey)
-    const finalTaskIndex = explicitPlan.length - 1
-    const runFinished = executionStatus === 'SUCCESS' || executionStatus === 'PARTIAL'
-    const seededTasks = explicitPlan.map((task, index) => {
-      const taskSteps = rawActionSteps.filter((step) => step?.arguments?.taskKey === task.key)
-      const matchedStep = taskSteps.at(-1)
-      const isCurrent = Boolean(currentActionKey && currentActionKey === task.key)
-      const hasSuccessfulActivity = taskSteps.some((step) => step?.status && step.status !== 'FAILED' && step.stepType !== 'plan')
-      const hasTerminalStep = taskSteps.some((step) => step?.stepType === 'finish' || step?.stepType === 'respond_with_gap')
-      let inferredStatus = 'PENDING'
-
-      if (completedTaskKeys.has(task.key) || hasTerminalStep || (runFinished && finalContent && index === finalTaskIndex)) {
-        inferredStatus = 'SUCCESS'
-      } else if (matchedStep?.status === 'FAILED') {
-        inferredStatus = matchedStep.status
-      } else if (matchedStep?.status === 'PARTIAL') {
-        inferredStatus = matchedStep.status
-      } else if (matchedStep?.status === 'RUNNING') {
-        inferredStatus = matchedStep.status
-      } else if (matchedStep?.status && !completedTaskKeys.size) {
-        inferredStatus = matchedStep.status
-      } else if (isCurrent) {
-        inferredStatus = 'RUNNING'
-      } else if (runFinished) {
-        if (hasSuccessfulActivity || (currentTaskIndex >= 0 && index < currentTaskIndex && taskSteps.length)) {
-          inferredStatus = 'PARTIAL'
-        } else {
-          inferredStatus = 'UNFINISHED'
-        }
-      }
-
-      return {
-        key: task.key || `task-${index + 1}`,
-        title: task.title || `任务 ${index + 1}`,
-        subtitle: matchedStep ? formatAgentStepLabel(matchedStep) : (task.description || ''),
-        detail: matchedStep?.observationSummary || matchedStep?.reason || task.description || '',
-        planOrigin: task.planOrigin || 'initial',
-        status: inferredStatus,
-        durationMs: matchedStep?.durationMs ?? null,
-        toolName: matchedStep?.toolName || '',
-        arguments: matchedStep?.arguments || null,
-        rawSteps: taskSteps,
-        order: index + 1
-      }
-    })
-    const { taskBuckets, orphanTools } = buildTaskToolBuckets(source, seededTasks, rawActionSteps)
-    const normalizedTasks = normalizeExecutionTaskStatuses(
-      seededTasks.map((task) => ({
-        ...task,
-        toolCalls: taskBuckets.get(task.key) || []
-      })),
-      executionStatus
-    )
-    const result = normalizedTasks.map((task) => ({
-      ...task,
-      orphanTools
-    }))
-    executionTaskCache.set(source, { signature: cacheSignature, tasks: result })
-    return result
-  }
-
-  const tasks = [
-    {
-      key: 'plan',
-      title: '理解问题并生成执行计划',
-      subtitle: source?.userGoal || '',
-      detail: steps[0]?.reason || '',
-      planOrigin: 'initial',
-      status: steps.length || finalContent ? 'SUCCESS' : (executionStatus === 'RUNNING' ? 'RUNNING' : 'PENDING')
-    }
-  ]
-
-  for (const step of steps) {
-    tasks.push({
-      key: `step-${step.stepIndex ?? tasks.length}`,
-      title: formatExecutionTaskTitle(step),
-      subtitle: formatAgentStepLabel(step),
-      detail: step.observationSummary || step.reason || '',
-      planOrigin: 'initial',
-      status: step.status || 'PENDING',
-      durationMs: step.durationMs ?? null,
-      toolName: step.toolName || '',
-      arguments: step.arguments || null,
-      rawSteps: [step]
-    })
-  }
-
-  tasks.push({
-    key: 'answer',
-    title: '输出最终回答',
-    subtitle: finalContent ? '已生成结果' : '等待汇总执行结果',
-    detail: '',
-    planOrigin: 'initial',
-    status: finalContent
-      ? 'SUCCESS'
-      : (executionStatus === 'RUNNING' ? 'RUNNING' : (executionStatus === 'PARTIAL' ? 'PARTIAL' : 'PENDING'))
-  })
-
-  const seededTasks = tasks.map((task, index) => ({
-    ...task,
-    order: index + 1
-  }))
-  const { taskBuckets, orphanTools } = buildTaskToolBuckets(source, seededTasks, rawActionSteps)
-  const normalizedTasks = normalizeExecutionTaskStatuses(
-    seededTasks.map((task) => ({
-      ...task,
-      toolCalls: taskBuckets.get(task.key) || []
-    })),
-    executionStatus
-  )
-  const result = normalizedTasks.map((task) => ({
-    ...task,
-    orphanTools
-  }))
-  executionTaskCache.set(source, { signature: cacheSignature, tasks: result })
-  return result
-}
-
-function normalizeExecutionTaskStatuses(tasks, executionStatus) {
-  if (!Array.isArray(tasks) || !tasks.length) {
-    return []
-  }
-
-  const terminalStatuses = new Set(['SUCCESS', 'FAILED', 'PARTIAL', 'UNFINISHED'])
-  const lastTerminalIndex = tasks.reduce((acc, task, index) => {
-    return terminalStatuses.has(task?.status) ? index : acc
-  }, -1)
-
-  return tasks.map((task, index) => {
-    if (!task || task.status !== 'RUNNING') {
-      return task
-    }
-
-    const hasLaterTerminalTask = lastTerminalIndex > index
-    const runClosed = executionStatus === 'SUCCESS' || executionStatus === 'PARTIAL'
-    if (!hasLaterTerminalTask && !runClosed) {
-      return task
-    }
-
-    const toolCalls = Array.isArray(task.toolCalls) ? task.toolCalls : []
-    const rawSteps = Array.isArray(task.rawSteps) ? task.rawSteps : []
-    const hasFailedSignal = toolCalls.some((item) => item?.status === 'FAILED') || rawSteps.some((item) => item?.status === 'FAILED')
-    const hasSuccessSignal = toolCalls.some((item) => item?.status === 'SUCCESS')
-      || rawSteps.some((item) => item?.status === 'SUCCESS')
-      || rawSteps.some((item) => item?.stepType === 'tool_call' && item?.status && item.status !== 'FAILED' && item.status !== 'RUNNING')
-
-    return {
-      ...task,
-      status: hasFailedSignal
-        ? 'FAILED'
-        : (hasSuccessSignal ? 'SUCCESS' : (runClosed ? 'UNFINISHED' : 'PARTIAL'))
-    }
-  })
-}
-
-function getExecutionProgressMeta(source) {
-  const tasks = buildExecutionTasks(source)
-  if (!tasks.length) {
-    return {
-      summary: '0 / 0',
-      headline: '等待开始',
-      subline: '还没有生成可展示的执行任务',
-      ratio: 0
-    }
-  }
-
-  const successCount = tasks.filter((task) => task.status === 'SUCCESS').length
-  const runningCount = tasks.filter((task) => task.status === 'RUNNING').length
-  const partialCount = tasks.filter((task) => task.status === 'PARTIAL').length
-  const unfinishedCount = tasks.filter((task) => task.status === 'UNFINISHED').length
-  const failedCount = tasks.filter((task) => task.status === 'FAILED').length
-  const ratio = Math.round((successCount / tasks.length) * 100)
-
-  let headline = `已完成 ${successCount} / ${tasks.length}`
-  let subline = '正在按计划推进'
-  if (failedCount) {
-    headline = `${failedCount} 个任务失败`
-    subline = successCount
-      ? `已完成 ${successCount} 个任务，仍有失败步骤需要处理`
-      : '执行中出现失败步骤'
-  } else if (runningCount) {
-    headline = `进行中 · ${successCount} / ${tasks.length}`
-    subline = partialCount
-      ? `还有 ${partialCount} 个任务已执行但未完全收尾`
-      : '当前任务正在执行'
-  } else if (unfinishedCount) {
-    headline = `已完成 ${successCount} / ${tasks.length}`
-    subline = `还有 ${unfinishedCount} 个任务未完成`
-  } else if (partialCount) {
-    headline = `已完成 ${successCount} / ${tasks.length}`
-    subline = `${partialCount} 个任务已执行但还没有完整收尾`
-  } else if (successCount === tasks.length) {
-    headline = `全部完成 · ${tasks.length} / ${tasks.length}`
-    subline = '整条执行链路已经闭环'
-  }
-
-  return {
-    summary: `${successCount} / ${tasks.length} 已完成`,
-    headline,
-    subline,
-    ratio
-  }
-}
-
-function getCurrentExecutionTask(source) {
-  const tasks = buildExecutionTasks(source)
-  const executionStatus = resolveExecutionStatus(source)
-  const activeTask = tasks.find((task) => task.status === 'RUNNING')
-    || tasks.find((task) => task.status === 'PENDING')
-  if (activeTask) {
-    return activeTask
-  }
-  if (executionStatus === 'SUCCESS' || executionStatus === 'PARTIAL') {
-    return null
-  }
-  return tasks[tasks.length - 1] || null
-}
-
-function isCurrentExecutionTask(source, task) {
-  if (!task) {
-    return false
-  }
-  const currentTask = getCurrentExecutionTask(source)
-  return Boolean(currentTask && currentTask.key === task.key)
-}
-
-function getExecutionOrphanTools(source) {
-  const tasks = buildExecutionTasks(source)
-  return tasks[0]?.orphanTools || []
-}
-
-function shortRunId(runId) {
-  if (!runId) {
-    return ''
-  }
-  return runId.length <= 16 ? runId : `${runId.slice(0, 12)}...`
 }
 
 function shouldRenderMessage(message) {
@@ -1831,9 +895,6 @@ function flushSessionSummary() {
 async function fetchKnowledgeBases() {
   const response = await kbApi.list()
   knowledgeBases.value = response.data || []
-  if (!selectedKbId.value && knowledgeBases.value.length) {
-    selectedKbId.value = knowledgeBases.value[0].id
-  }
 }
 
 async function fetchSkills() {
@@ -1871,9 +932,7 @@ async function loadSessionMessages(targetSessionId) {
   sessionId.value = targetSessionId
 
   const matchedKbId = response.data?.[0]?.kbId
-  if (matchedKbId) {
-    selectedKbId.value = matchedKbId
-  }
+  selectedKbId.value = matchedKbId ?? null
 
   syncSessionSummary()
   await scrollToBottom(true)
@@ -1894,6 +953,7 @@ async function initializeSessionFromRoute() {
 
   sessionId.value = ''
   messages.value = []
+  selectedKbId.value = null
 }
 
 const thinkingContent = ref('')
@@ -1953,28 +1013,22 @@ async function openRunDetailById(runId) {
   }
 }
 
-async function copyRunId(runId) {
-  if (!runId) {
-    return
-  }
-  await navigator.clipboard.writeText(runId)
-  ElMessage.success('Run ID 已复制')
-}
-
 function buildChatPayload(content) {
-  const documentIds = retrievalOptions.value.documentIds.length ? retrievalOptions.value.documentIds : null
-  const fileTypes = retrievalOptions.value.fileTypes.length ? retrievalOptions.value.fileTypes : null
+  const hasKnowledgeBase = isKnowledgeBaseMode.value
+  const documentIds = hasKnowledgeBase && retrievalOptions.value.documentIds.length ? retrievalOptions.value.documentIds : null
+  const fileTypes = hasKnowledgeBase && retrievalOptions.value.fileTypes.length ? retrievalOptions.value.fileTypes : null
 
   return {
     kbId: selectedKbId.value,
     sessionId: sessionId.value,
     question: content,
-    topK: retrievalOptions.value.topK,
-    scoreThreshold: Number(retrievalOptions.value.scoreThreshold.toFixed(2)),
+    topK: hasKnowledgeBase ? retrievalOptions.value.topK : null,
+    scoreThreshold: hasKnowledgeBase ? Number(retrievalOptions.value.scoreThreshold.toFixed(2)) : null,
     documentIds,
     fileTypes,
-    documentNameKeyword: retrievalOptions.value.documentNameKeyword.trim() || null,
-    skillNames: selectedSkillNames.value.length ? selectedSkillNames.value : null
+    documentNameKeyword: hasKnowledgeBase ? (retrievalOptions.value.documentNameKeyword.trim() || null) : null,
+    skillNames: selectedSkillNames.value.length ? selectedSkillNames.value : null,
+    agentEnabled: isAgentEnhancedMode.value
   }
 }
 
@@ -2110,7 +1164,7 @@ async function consumeStreamResponse(response, handlers) {
 }
 
 async function sendMessage() {
-  if (!question.value.trim() || !selectedKbId.value || isLoading.value) {
+  if (!question.value.trim() || isLoading.value) {
     return
   }
 
@@ -2160,6 +1214,9 @@ async function sendMessage() {
     if (!streamResponse.ok) {
       throw new Error(await extractResponseError(streamResponse))
     }
+
+    hasReceivedStreamEvent = true
+    resetStreamTimer()
 
     await consumeStreamResponse(streamResponse, {
       onMeta(streamPayload) {
@@ -2317,6 +1374,8 @@ async function resetConversation() {
   messages.value = []
   question.value = ''
   sessionId.value = ''
+  selectedKbId.value = null
+  assistantMode.value = 'fast'
   await router.replace({ path: '/' })
 }
 
@@ -2545,6 +1604,35 @@ onBeforeUnmount(() => {
   display: flex;
   align-items: center;
   gap: 12px;
+}
+
+.mode-switch {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 4px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.86);
+  border: 1px solid rgba(193, 208, 225, 0.9);
+  box-shadow: 0 8px 18px rgba(170, 188, 210, 0.12);
+}
+
+.mode-chip {
+  border: 0;
+  background: transparent;
+  color: #5f6f85;
+  border-radius: 999px;
+  padding: 8px 14px;
+  font-size: 13px;
+  font-weight: 700;
+  cursor: pointer;
+  transition: background var(--transition-fast), color var(--transition-fast), box-shadow var(--transition-fast);
+}
+
+.mode-chip.active {
+  background: linear-gradient(135deg, rgba(219, 238, 255, 0.98), rgba(204, 228, 255, 0.98));
+  color: #1f4b7b;
+  box-shadow: inset 0 0 0 1px rgba(152, 187, 224, 0.82);
 }
 
 .kb-select {
@@ -3057,19 +2145,67 @@ onBeforeUnmount(() => {
   padding: 16px 18px;
   border-radius: 18px;
   background:
-    linear-gradient(180deg, rgba(13, 18, 33, 0.98), rgba(10, 14, 25, 0.98)),
-    linear-gradient(135deg, rgba(101, 141, 192, 0.16), transparent 40%);
-  border: 1px solid rgba(144, 167, 200, 0.16);
+    linear-gradient(180deg, rgba(252, 254, 255, 0.99), rgba(245, 249, 253, 0.99)),
+    linear-gradient(135deg, rgba(143, 185, 227, 0.08), transparent 44%);
+  border: 1px solid rgba(188, 204, 222, 0.92);
   box-shadow:
-    inset 0 1px 0 rgba(255, 255, 255, 0.04),
-    0 12px 28px rgba(20, 28, 48, 0.18);
+    inset 0 1px 0 rgba(255, 255, 255, 0.72),
+    0 12px 28px rgba(142, 164, 191, 0.12);
   margin: 12px 0;
+  color: #22364f;
 }
 
 .message-bubble :deep(code) {
   font-family: 'JetBrains Mono', 'Fira Code', 'Consolas', 'Courier New', monospace;
   font-size: 13px;
   font-variant-ligatures: common-ligatures;
+}
+
+.message-bubble :deep(pre code),
+.message-bubble :deep(.hljs) {
+  background: transparent;
+  color: #22364f;
+}
+
+.message-bubble :deep(.hljs-comment),
+.message-bubble :deep(.hljs-quote) {
+  color: #6f8096;
+}
+
+.message-bubble :deep(.hljs-keyword),
+.message-bubble :deep(.hljs-selector-tag),
+.message-bubble :deep(.hljs-built_in),
+.message-bubble :deep(.hljs-name),
+.message-bubble :deep(.hljs-tag) {
+  color: #8b3fd1;
+}
+
+.message-bubble :deep(.hljs-string),
+.message-bubble :deep(.hljs-attr),
+.message-bubble :deep(.hljs-template-tag),
+.message-bubble :deep(.hljs-template-variable) {
+  color: #176d52;
+}
+
+.message-bubble :deep(.hljs-number),
+.message-bubble :deep(.hljs-literal),
+.message-bubble :deep(.hljs-symbol),
+.message-bubble :deep(.hljs-bullet) {
+  color: #0f6aa8;
+}
+
+.message-bubble :deep(.hljs-title),
+.message-bubble :deep(.hljs-section),
+.message-bubble :deep(.hljs-type) {
+  color: #1c4f91;
+}
+
+.message-bubble :deep(.language-mermaid),
+.message-bubble :deep(pre code.language-mermaid) {
+  display: block;
+  white-space: pre-wrap;
+  word-break: break-word;
+  color: #1f334a;
 }
 
 .message-bubble :deep(:not(pre) > code) {
@@ -4091,33 +3227,10 @@ onBeforeUnmount(() => {
   animation-delay: 0.3s;
 }
 
-.chat-input-wrap {
-  position: absolute;
-  left: 16px;
-  right: 16px;
-  bottom: 16px;
-  z-index: 4;
-  padding-top: 0;
-  background: linear-gradient(180deg, rgba(248, 251, 255, 0) 0%, rgba(244, 248, 252, 0.62) 24%, rgba(239, 245, 251, 0.94) 100%);
-}
-
-.chat-input-card {
-  border-radius: 28px;
-  padding: 12px;
-  background:
-    linear-gradient(180deg, rgba(255, 255, 255, 0.96), rgba(245, 249, 254, 0.98)),
-    linear-gradient(135deg, rgba(126, 205, 255, 0.08), transparent 44%);
-  border: 1px solid rgba(194, 211, 229, 0.42);
-  box-shadow:
-    0 18px 36px rgba(165, 185, 210, 0.16),
-    inset 0 1px 0 rgba(255, 255, 255, 0.88);
-  contain: layout paint;
-}
-
 .scroll-to-latest-btn {
   position: sticky;
   left: calc(100% - 148px);
-  bottom: 132px;
+  bottom: 80px;
   z-index: 3;
   margin-left: auto;
   display: inline-flex;
@@ -4137,84 +3250,6 @@ onBeforeUnmount(() => {
 
 .scroll-to-latest-btn:hover {
   background: #ffffff;
-}
-
-.chat-input-card :deep(.el-textarea__inner) {
-  min-height: 52px !important;
-  padding: 14px 148px 14px 14px !important;
-  background: rgba(251, 253, 255, 0.92) !important;
-  box-shadow:
-    0 0 0 1px rgba(190, 208, 228, 0.52) inset,
-    0 0 0 3px rgba(255, 120, 120, 0.05) !important;
-  color: #22354c !important;
-}
-
-.composer-box {
-  position: relative;
-}
-
-.composer-actions {
-  position: absolute;
-  right: 10px;
-  bottom: 10px;
-  z-index: 2;
-}
-
-.chat-input-meta {
-  display: flex;
-  justify-content: space-between;
-  gap: 14px;
-  align-items: center;
-  margin-bottom: 8px;
-}
-
-.chat-session-tag {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  height: fit-content;
-  padding: 8px 12px;
-  border-radius: 999px;
-  background: rgba(220, 241, 255, 0.9);
-  color: #4f85c1;
-  font-size: 12px;
-  font-weight: 800;
-}
-
-.chat-input-hints {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 10px;
-}
-
-.hint-badge {
-  padding: 5px 10px;
-  border-radius: 999px;
-  background: rgba(228, 243, 255, 0.92);
-  color: #5d86b1;
-  font-size: 11px;
-  font-weight: 700;
-}
-
-.send-btn {
-  min-width: 112px;
-}
-
-.send-btn-inside {
-  min-width: 118px;
-  height: 40px;
-  border-radius: 14px;
-  background: linear-gradient(135deg, #d8efff, #b9dbff) !important;
-  border: 1px solid rgba(255, 124, 124, 0.24) !important;
-  box-shadow:
-    0 10px 20px rgba(162, 185, 214, 0.18),
-    0 0 0 1px rgba(255, 255, 255, 0.58) inset !important;
-}
-
-.stop-btn {
-  background: linear-gradient(135deg, #fff2d8, #ffd8d8) !important;
-  border-color: rgba(239, 68, 68, 0.22) !important;
-  color: #9a4b4b !important;
 }
 
 @keyframes pulse {
@@ -4308,7 +3343,6 @@ onBeforeUnmount(() => {
   }
 
   .chat-toolbar,
-  .chat-input-meta,
   .retrieval-actions {
     flex-direction: column;
     align-items: flex-start;
@@ -4339,13 +3373,6 @@ onBeforeUnmount(() => {
     padding-bottom: 12px;
   }
 
-  .chat-input-wrap {
-    position: sticky;
-    left: auto;
-    right: auto;
-    bottom: 0;
-  }
-
   .scroll-to-latest-btn {
     bottom: 88px;
   }
@@ -4358,21 +3385,6 @@ onBeforeUnmount(() => {
     flex-direction: column;
     width: 100%;
     max-width: 420px;
-  }
-
-  .chat-input-card :deep(.el-textarea__inner) {
-    padding-right: 14px !important;
-    padding-bottom: 64px !important;
-  }
-
-  .composer-actions {
-    left: 10px;
-    right: 10px;
-  }
-
-  .send-btn-inside {
-    width: 100%;
-    min-width: 0;
   }
 
   .prompt-chip {

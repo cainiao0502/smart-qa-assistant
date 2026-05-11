@@ -68,10 +68,9 @@
       </div>
 
       <div v-if="recentSessions.length" class="history-list">
-        <button
+        <div
           v-for="session in recentSessions"
           :key="session.id"
-          type="button"
           class="history-item"
           :class="{ active: currentSessionId === session.id }"
           @click="selectSession(session.id)"
@@ -81,8 +80,18 @@
             <span class="history-time">{{ formatTime(session.updatedAt) }}</span>
           </div>
           <span class="history-preview">{{ session.preview || '继续查看这段对话内容' }}</span>
-          <span v-if="session.kbName" class="history-tag">{{ session.kbName }}</span>
-        </button>
+          <div class="history-item-footer">
+            <span v-if="session.kbName" class="history-tag">{{ session.kbName }}</span>
+            <button
+              type="button"
+              class="history-delete-btn"
+              title="删除会话"
+              @click.stop="handleDeleteSession(session.id)"
+            >
+              <el-icon><Delete /></el-icon>
+            </button>
+          </div>
+        </div>
       </div>
 
       <div v-else class="history-empty">
@@ -111,9 +120,10 @@
 <script setup>
 import { computed, onMounted, onUnmounted, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import { ElMessageBox } from 'element-plus'
-import { ChatLineSquare, Connection, Expand, Fold, Folder, Plus, Reading, User } from '@element-plus/icons-vue'
-import { clearRecentSessions, listRecentSessions, subscribeRecentSessions } from '@/utils/chatSessions'
+import { ElMessage, ElMessageBox } from 'element-plus'
+import { ChatLineSquare, Connection, Delete, Expand, Fold, Folder, Plus, Reading, User } from '@element-plus/icons-vue'
+import { chatApi } from '@/api'
+import { clearRecentSessions, listRecentSessions, removeRecentSession, subscribeRecentSessions } from '@/utils/chatSessions'
 
 defineProps({
   collapsed: {
@@ -126,7 +136,7 @@ defineEmits(['toggle'])
 
 const route = useRoute()
 const router = useRouter()
-const recentSessions = ref(listRecentSessions())
+const recentSessions = ref([])
 
 const navItems = [
   {
@@ -166,8 +176,21 @@ const isActive = (path) => {
   return route.path.startsWith(path)
 }
 
-const refreshSessions = () => {
-  recentSessions.value = listRecentSessions()
+const refreshSessions = async () => {
+  try {
+    const response = await chatApi.listSessions()
+    recentSessions.value = (response.data || []).map((s) => ({
+      id: s.sessionId,
+      title: s.title || '未命名会话',
+      preview: s.preview || '',
+      kbId: s.kbId,
+      kbName: s.kbName || '',
+      messageCount: s.messageCount || 0,
+      updatedAt: s.lastActivityAt || ''
+    }))
+  } catch {
+    recentSessions.value = listRecentSessions()
+  }
 }
 
 const createNewChat = () => {
@@ -189,6 +212,34 @@ const handleClearHistory = async () => {
     }
   )
   clearRecentSessions()
+  refreshSessions()
+}
+
+const handleDeleteSession = async (sessionId) => {
+  try {
+    await ElMessageBox.confirm(
+      '删除该会话将同时清除数据库中的所有消息记录，此操作不可撤销。确定继续吗？',
+      '删除会话',
+      {
+        confirmButtonText: '删除',
+        cancelButtonText: '取消',
+        type: 'warning'
+      }
+    )
+  } catch {
+    return
+  }
+  try {
+    await chatApi.deleteSession(sessionId)
+    removeRecentSession(sessionId)
+    ElMessage.success('会话已删除')
+    if (currentSessionId.value === sessionId) {
+      router.push({ path: '/' })
+    }
+    refreshSessions()
+  } catch (error) {
+    ElMessage.error(error.message || '删除会话失败')
+  }
 }
 
 const formatTime = (value) => {
@@ -523,6 +574,37 @@ onUnmounted(() => {
   color: #5f7ea2;
   font-size: 11px;
   font-weight: 700;
+}
+
+.history-item-footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.history-delete-btn {
+  width: 26px;
+  height: 26px;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  color: #a0aec0;
+  display: grid;
+  place-items: center;
+  cursor: pointer;
+  flex-shrink: 0;
+  opacity: 0;
+  transition: opacity var(--transition-fast), background var(--transition-fast), color var(--transition-fast);
+}
+
+.history-item:hover .history-delete-btn {
+  opacity: 1;
+}
+
+.history-delete-btn:hover {
+  background: rgba(255, 200, 200, 0.92);
+  color: #e53e3e;
 }
 
 .history-empty {
