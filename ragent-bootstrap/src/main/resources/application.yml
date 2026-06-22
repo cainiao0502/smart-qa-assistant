@@ -1,0 +1,66 @@
+spring:
+  config:
+    import: optional:file:.env[.properties],optional:file:../.env[.properties]
+  application:
+    name: ragent-bootstrap
+  datasource:
+    url: ${SPRING_DATASOURCE_URL:jdbc:postgresql://127.0.0.1:5432/ragent}
+    username: ${SPRING_DATASOURCE_USERNAME:postgres}
+    password: ${SPRING_DATASOURCE_PASSWORD:postgres}
+    driver-class-name: org.postgresql.Driver
+  servlet:
+    multipart:
+      max-file-size: 20MB
+      max-request-size: 20MB
+
+server:
+  port: 8080
+
+ai:
+  chat:
+    candidates:
+      - provider: minimax
+        base-url: ${APP_LLM_BASE_URL:https://api.minimaxi.com/v1}
+        api-key: ${APP_LLM_API_KEY:}
+        model: ${APP_LLM_CHAT_MODEL:MiniMax-M2.7}
+      - provider: siliconflow
+        base-url: ${SILICONFLOW_BASE_URL:https://api.siliconflow.cn/v1}
+        api-key: ${SILICONFLOW_API_KEY:}
+        model: Qwen/Qwen2.5-72B
+  embedding:
+    candidates:
+      - provider: siliconflow
+        base-url: ${SILICONFLOW_BASE_URL:https://api.siliconflow.cn/v1}
+        api-key: ${SILICONFLOW_API_KEY:}
+        model: ${SILICONFLOW_EMBEDDING_MODEL:Qwen/Qwen3-Embedding-0.6B}
+      - provider: minimax
+        base-url: ${APP_LLM_BASE_URL:https://api.minimaxi.com/v1}
+        api-key: ${APP_LLM_API_KEY:}
+        model: ${APP_LLM_EMBEDDING_MODEL:embo-01}
+  retry:
+    max-attempts: 3
+    backoff-ms: 800
+
+app:
+  agent:
+    max-steps: 6
+  storage:
+    upload-dir: uploads
+  rag:
+    top-k: 4
+    reference-distance-threshold: 0.4
+    history-limit: 6
+    chunk-size: 500
+    chunk-overlap: 80
+    query-rewrite:
+      enabled: true
+    rerank:
+      enabled: true
+      candidate-multiplier: 3
+      semantic-weight: 0.75
+      lexical-weight: 0.25
+  mcp:
+    enabled: ${APP_MCP_ENABLED:false}
+    request-timeout-ms: ${APP_MCP_REQUEST_TIMEOUT_MS:30000}
+    tool-cache-seconds: ${APP_MCP_TOOL_CACHE_SECONDS:300}
+    custom-config-path: ${APP_MCP_CUSTOM_CONFIG_PATH:data/mcp/custom-servers.json}

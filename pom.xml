@@ -1,0 +1,48 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 https://maven.apache.org/xsd/maven-4.0.0.xsd">
+    <modelVersion>4.0.0</modelVersion>
+
+    <groupId>com.nailinai</groupId>
+    <artifactId>ragent-parent</artifactId>
+    <version>0.0.1-SNAPSHOT</version>
+    <packaging>pom</packaging>
+    <name>ragent-parent</name>
+    <description>Ragent multi-module parent</description>
+
+    <parent>
+        <groupId>org.springframework.boot</groupId>
+        <artifactId>spring-boot-starter-parent</artifactId>
+        <version>4.0.5</version>
+        <relativePath/>
+    </parent>
+
+    <modules>
+        <module>ragent-framework</module>
+        <module>ragent-infra-ai</module>
+        <module>ragent-bootstrap</module>
+    </modules>
+
+    <properties>
+        <java.version>21</java.version>
+        <mybatis.version>3.0.4</mybatis.version>
+        <pgvector.version>0.1.6</pgvector.version>
+        <tika.version>3.2.3</tika.version>
+    </properties>
+
+    <dependencyManagement>
+        <dependencies>
+            <dependency>
+                <groupId>com.nailinai</groupId>
+                <artifactId>ragent-framework</artifactId>
+                <version>${project.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>com.nailinai</groupId>
+                <artifactId>ragent-infra-ai</artifactId>
+                <version>${project.version}</version>
+            </dependency>
+        </dependencies>
+    </dependencyManagement>
+</project>
