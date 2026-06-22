@@ -1,0 +1,220 @@
+/* jelly-animations.css - 液态果冻呼吸感动画系统 */
+/* keyframes、工具类和液态背景样式 */
+
+/* ============================================
+   @keyframes 动画定义
+   所有动画仅使用 transform, opacity, box-shadow, background-position
+   确保 GPU 加速，不触发布局重排
+   ============================================ */
+
+/* 1. 呼吸脉动 - 用于品牌标识、空状态图标等关键视觉元素 */
+@keyframes breathe {
+  0% {
+    transform: scale(var(--breathe-scale-min, 0.97));
+    opacity: 0.92;
+    box-shadow: 0 0 0 0 rgba(91, 108, 255, 0.04);
+  }
+  50% {
+    transform: scale(var(--breathe-scale-max, 1.03));
+    opacity: 1;
+    box-shadow: 0 0 12px 2px rgba(91, 108, 255, 0.08);
+  }
+  100% {
+    transform: scale(var(--breathe-scale-min, 0.97));
+    opacity: 0.92;
+    box-shadow: 0 0 0 0 rgba(91, 108, 255, 0.04);
+  }
+}
+
+/* 2. 果冻弹跳 - 用于加载指示器圆点 */
+@keyframes jelly-bounce {
+  0% {
+    transform: scale(1);
+  }
+  20% {
+    transform: scale(1.4);
+  }
+  40% {
+    transform: scale(0.85);
+  }
+  60% {
+    transform: scale(1.15);
+  }
+  80% {
+    transform: scale(0.95);
+  }
+  100% {
+    transform: scale(1);
+  }
+}
+
+/* 3. 液态背景流动 - 用于应用背景渐变动画 */
+@keyframes liquid-flow {
+  0% {
+    background-position: 0% 0%;
+  }
+  25% {
+    background-position: 100% 0%;
+  }
+  50% {
+    background-position: 100% 100%;
+  }
+  75% {
+    background-position: 0% 100%;
+  }
+  100% {
+    background-position: 0% 0%;
+  }
+}
+
+/* 4. 助手消息从左下滑入 */
+@keyframes message-enter-left {
+  from {
+    transform: translateX(-20px) translateY(12px) scale(0.96);
+    opacity: 0;
+  }
+  to {
+    transform: translateX(0) translateY(0) scale(1);
+    opacity: 1;
+  }
+}
+
+/* 5. 用户消息从右下滑入 */
+@keyframes message-enter-right {
+  from {
+    transform: translateX(20px) translateY(12px) scale(0.96);
+    opacity: 0;
+  }
+  to {
+    transform: translateX(0) translateY(0) scale(1);
+    opacity: 1;
+  }
+}
+
+/* 6. 聚焦发光脉动 - 用于输入框聚焦状态 */
+@keyframes glow-pulse {
+  0% {
+    box-shadow: 0 0 0 2px rgba(91, 108, 255, 0.12), 0 0 8px 0 rgba(91, 108, 255, 0.06);
+  }
+  50% {
+    box-shadow: 0 0 0 3px rgba(91, 108, 255, 0.18), 0 0 16px 2px rgba(91, 108, 255, 0.1);
+  }
+  100% {
+    box-shadow: 0 0 0 2px rgba(91, 108, 255, 0.12), 0 0 8px 0 rgba(91, 108, 255, 0.06);
+  }
+}
+
+/* ============================================
+   果冻形变工具类
+   提供可复用的交互动画效果
+   ============================================ */
+
+/* 1. 果冻悬停 - 悬停放大 + 按压挤压 + 弹性缓动 */
+.jelly-hover {
+  transition: transform var(--duration-jelly) var(--spring-soft);
+}
+
+.jelly-hover:hover {
+  transform: scale(var(--jelly-hover-scale, 1.03));
+}
+
+.jelly-hover:active {
+  transform: scaleX(var(--jelly-press-x, 1.04)) scaleY(var(--jelly-press-y, 0.96));
+}
+
+.jelly-hover[disabled],
+.jelly-hover.disabled {
+  cursor: not-allowed;
+}
+
+.jelly-hover[disabled]:hover,
+.jelly-hover[disabled]:active,
+.jelly-hover.disabled:hover,
+.jelly-hover.disabled:active {
+  transform: none;
+}
+
+/* 2. 果冻按压 - 仅按压挤压效果，无悬停放大 */
+.jelly-press {
+  transition: transform var(--duration-jelly) var(--spring-bounce);
+}
+
+.jelly-press:active {
+  transform: scaleX(var(--jelly-press-x, 1.04)) scaleY(var(--jelly-press-y, 0.96));
+}
+
+.jelly-press[disabled],
+.jelly-press.disabled {
+  cursor: not-allowed;
+}
+
+.jelly-press[disabled]:active,
+.jelly-press.disabled:active {
+  transform: none;
+}
+
+/* 3. 果冻呼吸 - 应用呼吸脉动动画 */
+.jelly-breathe {
+  animation: breathe var(--duration-breathe, 4s) ease-in-out infinite;
+  will-change: transform, opacity;
+}
+
+.jelly-breathe:hover,
+.jelly-breathe:focus-within {
+  animation-play-state: paused;
+}
+
+/* ============================================
+   无障碍降级：prefers-reduced-motion
+   ============================================ */
+
+@media (prefers-reduced-motion: reduce) {
+  .jelly-hover,
+  .jelly-press {
+    transition-duration: 0.01ms !important;
+  }
+
+  .jelly-breathe {
+    animation: none !important;
+  }
+}
+
+/* ============================================
+   液态流动背景
+   使用多色渐变 + liquid-flow 动画
+   ============================================ */
+
+.liquid-bg::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  z-index: 0;
+  background: 
+    radial-gradient(circle at 20% 20%, rgba(123, 211, 255, 0.15), transparent 40%),
+    radial-gradient(circle at 80% 30%, rgba(91, 108, 255, 0.12), transparent 35%),
+    radial-gradient(circle at 50% 80%, rgba(163, 130, 255, 0.1), transparent 40%);
+  background-size: 400% 400%;
+  animation: liquid-flow var(--duration-liquid, 20s) ease-in-out infinite;
+  pointer-events: none;
+  will-change: background-position;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .liquid-bg::before {
+    animation: none !important;
+  }
+}
+
+/* ============================================
+   性能降级：低性能设备
+   hardwareConcurrency < 4 时通过 .reduced-animation 类控制
+   ============================================ */
+
+.reduced-animation .liquid-bg::before,
+.reduced-animation .app-shell::before {
+  animation: none !important;
+}
+
+.reduced-animation .jelly-breathe {
+  animation-duration: 6s;
+}

@@ -54,6 +54,27 @@
   --content-padding: 16px;
   --transition-fast: 160ms cubic-bezier(0.4, 0, 0.2, 1);
   --transition-normal: 260ms cubic-bezier(0.22, 1, 0.36, 1);
+
+  /* 弹性缓动函数 */
+  --spring-soft: cubic-bezier(0.34, 1.56, 0.64, 1);
+  --spring-bounce: cubic-bezier(0.68, -0.55, 0.265, 1.55);
+  --spring-snappy: cubic-bezier(0.22, 1.2, 0.36, 1);
+
+  /* 动画时长 */
+  --duration-jelly: 400ms;
+  --duration-bounce: 600ms;
+  --duration-breathe: 4s;
+  --duration-liquid: 20s;
+  --duration-entrance: 380ms;
+
+  /* 呼吸参数 */
+  --breathe-scale-min: 0.97;
+  --breathe-scale-max: 1.03;
+
+  /* 果冻形变参数 */
+  --jelly-hover-scale: 1.03;
+  --jelly-press-x: 1.04;
+  --jelly-press-y: 0.96;
 }
 
 *,
@@ -158,18 +179,20 @@ svg {
 .soft-chip {
   display: inline-flex;
   align-items: center;
-  gap: 8px;
-  padding: 6px 12px;
+  gap: 6px;
+  padding: 5px 12px;
   border-radius: var(--radius-pill);
-  background: var(--bg-chip);
+  background: linear-gradient(135deg, rgba(91, 108, 255, 0.08), rgba(123, 211, 255, 0.08));
   color: var(--primary-strong);
   font-size: 11px;
-  font-weight: 700;
+  font-weight: 600;
+  border: 1px solid rgba(91, 108, 255, 0.1);
 }
 
 .el-button {
-  --el-button-border-radius: 12px;
-  font-weight: 700;
+  --el-button-border-radius: 999px;
+  font-weight: 600;
+  letter-spacing: 0.01em;
 }
 
 .el-button--primary {
@@ -184,10 +207,10 @@ svg {
 .el-input__wrapper,
 .el-textarea__inner,
 .el-select .el-input__wrapper {
-  border-radius: 14px;
+  border-radius: 16px;
   background: rgba(255, 255, 255, 0.94) !important;
   color: var(--text-primary);
-  box-shadow: 0 0 0 1px rgba(188, 205, 223, 0.62) inset !important;
+  box-shadow: 0 0 0 1px rgba(200, 215, 232, 0.5) inset !important;
 }
 
 .el-select__placeholder,
@@ -207,20 +230,20 @@ svg {
 
 .el-button.is-plain,
 .el-button--default {
-  --el-button-text-color: var(--text-primary);
-  --el-button-bg-color: rgba(255, 255, 255, 0.98);
-  --el-button-border-color: rgba(188, 205, 223, 0.62);
-  --el-button-hover-text-color: #0f172a;
+  --el-button-text-color: var(--text-secondary);
+  --el-button-bg-color: rgba(255, 255, 255, 0.96);
+  --el-button-border-color: rgba(200, 215, 232, 0.5);
+  --el-button-hover-text-color: var(--text-primary);
   --el-button-hover-bg-color: #ffffff;
-  --el-button-hover-border-color: rgba(91, 108, 255, 0.28);
+  --el-button-hover-border-color: rgba(91, 108, 255, 0.22);
 }
 
 .el-input__wrapper.is-focus,
 .el-select .el-input__wrapper.is-focus,
 .el-textarea__inner:focus {
   box-shadow:
-    0 0 0 1px rgba(91, 108, 255, 0.42) inset,
-    0 0 0 4px rgba(91, 108, 255, 0.1) !important;
+    0 0 0 1.5px rgba(91, 108, 255, 0.35) inset,
+    0 0 0 3px rgba(91, 108, 255, 0.08) !important;
 }
 
 .el-table {

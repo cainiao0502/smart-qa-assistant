@@ -104,6 +104,7 @@ const modeLabel = computed(() => {
     0 2px 8px rgba(0,0,0,0.04),
     0 8px 32px rgba(0,0,0,0.1),
     0 0 0 2px rgba(59, 130, 246, 0.3);
+  animation: glow-pulse 2s ease-in-out infinite;
 }
 
 .chat-textarea {
@@ -205,17 +206,17 @@ const modeLabel = computed(() => {
   background: linear-gradient(135deg, #3b82f6 0%, #2563eb 100%);
   color: #fff;
   cursor: pointer;
-  transition: all 0.2s ease;
+  transition: all var(--duration-jelly, 400ms) var(--spring-soft, cubic-bezier(0.34, 1.56, 0.64, 1));
   box-shadow: 0 2px 8px rgba(59, 130, 246, 0.3);
 }
 
 .send-btn:hover:not(.disabled) {
-  transform: translateY(-1px);
+  transform: scale(var(--jelly-hover-scale, 1.03));
   box-shadow: 0 4px 12px rgba(59, 130, 246, 0.4);
 }
 
 .send-btn:active:not(.disabled) {
-  transform: translateY(0);
+  transform: scaleX(var(--jelly-press-x, 1.04)) scaleY(var(--jelly-press-y, 0.96));
 }
 
 .send-btn.disabled {
@@ -223,6 +224,7 @@ const modeLabel = computed(() => {
   color: #9ca3af;
   cursor: not-allowed;
   box-shadow: none;
+  transform: none;
 }
 
 .send-btn.stop {
@@ -231,7 +233,12 @@ const modeLabel = computed(() => {
 }
 
 .send-btn.stop:hover {
+  transform: scale(var(--jelly-hover-scale, 1.03));
   box-shadow: 0 4px 12px rgba(239, 68, 68, 0.4);
+}
+
+.send-btn.stop:active {
+  transform: scaleX(var(--jelly-press-x, 1.04)) scaleY(var(--jelly-press-y, 0.96));
 }
 
 @media (max-width: 768px) {
@@ -259,6 +266,15 @@ const modeLabel = computed(() => {
   
   .session-badge {
     display: none;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .send-btn {
+    transition-duration: 0.01ms !important;
+  }
+  .input-wrapper:focus-within {
+    animation: none !important;
   }
 }
 </style>

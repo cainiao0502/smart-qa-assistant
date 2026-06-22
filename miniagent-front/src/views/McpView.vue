@@ -144,26 +144,26 @@
               </div>
             </div>
 
-            <div class="server-meta-grid">
-              <div class="meta-item">
-                <span>进程状态</span>
-                <strong>{{ server.processStatus?.running ? '运行中' : '未运行' }}</strong>
-              </div>
-              <div class="meta-item">
-                <span>启用状态</span>
-                <strong>{{ configSwitchText(server) }}</strong>
-              </div>
-              <div class="meta-item">
-                <span>配置完整性</span>
-                <strong>{{ server.configured ? '已就绪' : '不完整' }}</strong>
-              </div>
-              <div class="meta-item">
-                <span>API Key</span>
-                <strong>{{ server.hasApiKey ? '已配置' : '未填写' }}</strong>
-              </div>
-            </div>
-
             <div v-if="isServerExpanded(server.serverId)" class="server-details">
+              <div class="server-meta-grid">
+                <div class="meta-item">
+                  <span>进程状态</span>
+                  <strong>{{ server.processStatus?.running ? '运行中' : '未运行' }}</strong>
+                </div>
+                <div class="meta-item">
+                  <span>启用状态</span>
+                  <strong>{{ configSwitchText(server) }}</strong>
+                </div>
+                <div class="meta-item">
+                  <span>配置完整性</span>
+                  <strong>{{ server.configured ? '已就绪' : '不完整' }}</strong>
+                </div>
+                <div class="meta-item">
+                  <span>API Key</span>
+                  <strong>{{ server.hasApiKey ? '已配置' : '未填写' }}</strong>
+                </div>
+              </div>
+
               <div class="transport-panel">
                 <div class="tool-section-header">
                   <span class="subheading">传输配置</span>
@@ -430,6 +430,7 @@ function primaryStatusText(server) {
   return {
     AVAILABLE: '可用',
     UNAVAILABLE: '不可用',
+    STOPPED: '已停止',
     DISABLED: '已禁用',
     DISABLED_GLOBAL: '全局关闭',
     NOT_CONFIGURED: '未配置'
@@ -441,6 +442,7 @@ function primaryStatusClass(server) {
   return {
     AVAILABLE: 'success',
     UNAVAILABLE: 'warning',
+    STOPPED: 'info',
     DISABLED: 'muted',
     DISABLED_GLOBAL: 'danger',
     NOT_CONFIGURED: 'info'
@@ -855,8 +857,12 @@ onMounted(() => {
 .server-url {
   margin-top: 8px;
   color: var(--text-secondary);
-  line-height: 1.6;
-  word-break: break-all;
+  font-size: 12px;
+  line-height: 1.5;
+  max-width: 280px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .server-side {

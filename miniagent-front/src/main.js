@@ -5,6 +5,7 @@ import App from './App.vue'
 import router from './router'
 import { installGlobalErrorHandler } from './composables/useGlobalErrorHandler'
 import './assets/main.css'
+import './assets/jelly-animations.css'
 
 const app = createApp(App)
 

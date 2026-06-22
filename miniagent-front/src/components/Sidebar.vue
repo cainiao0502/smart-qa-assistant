@@ -124,7 +124,6 @@ import { ElMessage, ElMessageBox } from 'element-plus'
 import { ChatLineSquare, Connection, Delete, Expand, Fold, Folder, Plus, Reading, User } from '@element-plus/icons-vue'
 import { chatApi } from '@/api'
 import { clearRecentSessions, listRecentSessions, removeRecentSession, subscribeRecentSessions } from '@/utils/chatSessions'
-
 defineProps({
   collapsed: {
     type: Boolean,
@@ -137,7 +136,6 @@ defineEmits(['toggle'])
 const route = useRoute()
 const router = useRouter()
 const recentSessions = ref([])
-
 const navItems = [
   {
     path: '/',
@@ -284,8 +282,8 @@ onUnmounted(() => {
     inset 0 1px 0 rgba(255, 255, 255, 0.92),
     0 20px 44px rgba(164, 183, 210, 0.16);
   transition:
-    width var(--transition-normal),
-    padding var(--transition-normal),
+    width var(--duration-bounce, 600ms) var(--spring-snappy, cubic-bezier(0.22, 1.2, 0.36, 1)),
+    padding var(--duration-bounce, 600ms) var(--spring-snappy, cubic-bezier(0.22, 1.2, 0.36, 1)),
     box-shadow var(--transition-fast);
 }
 
@@ -322,6 +320,11 @@ onUnmounted(() => {
   background: linear-gradient(135deg, #8ccfff, #7e8fff);
   box-shadow: 0 12px 24px rgba(141, 166, 210, 0.22);
   flex-shrink: 0;
+  animation: breathe var(--duration-breathe, 4s) ease-in-out infinite;
+}
+
+.brand-mark:hover {
+  animation-play-state: paused;
 }
 
 .brand-copy {
@@ -353,13 +356,17 @@ onUnmounted(() => {
   place-items: center;
   cursor: pointer;
   flex-shrink: 0;
-  transition: background var(--transition-fast), color var(--transition-fast), transform var(--transition-fast);
+  transition: background var(--transition-fast), color var(--transition-fast), transform var(--duration-jelly, 400ms) var(--spring-soft, cubic-bezier(0.34, 1.56, 0.64, 1));
 }
 
 .collapse-btn:hover {
   background: #ffffff;
   color: #3e5875;
-  transform: translateY(-1px);
+  transform: scale(var(--jelly-hover-scale, 1.03));
+}
+
+.collapse-btn:active {
+  transform: scaleX(var(--jelly-press-x, 1.04)) scaleY(var(--jelly-press-y, 0.96));
 }
 
 .new-chat-btn {
@@ -376,13 +383,17 @@ onUnmounted(() => {
   color: #325a86;
   font-weight: 700;
   cursor: pointer;
-  transition: transform var(--transition-fast), background var(--transition-fast), box-shadow var(--transition-fast);
+  transition: transform var(--duration-jelly, 400ms) var(--spring-soft, cubic-bezier(0.34, 1.56, 0.64, 1)), background var(--transition-fast), box-shadow var(--transition-fast);
 }
 
 .new-chat-btn:hover {
-  transform: translateY(-1px);
+  transform: scale(var(--jelly-hover-scale, 1.03));
   background: linear-gradient(135deg, rgba(240, 247, 255, 1), rgba(229, 241, 255, 0.98));
   box-shadow: 0 14px 24px rgba(176, 196, 222, 0.18);
+}
+
+.new-chat-btn:active {
+  transform: scaleX(var(--jelly-press-x, 1.04)) scaleY(var(--jelly-press-y, 0.96));
 }
 
 .new-chat-btn.compact {
@@ -417,7 +428,7 @@ onUnmounted(() => {
   padding: 10px 12px;
   border-radius: 16px;
   margin-bottom: 8px;
-  transition: background var(--transition-fast), transform var(--transition-fast), border-color var(--transition-fast);
+  transition: background var(--transition-fast), transform var(--duration-jelly, 400ms) var(--spring-soft, cubic-bezier(0.34, 1.56, 0.64, 1)), border-color var(--transition-fast);
   border: 1px solid transparent;
 }
 
@@ -428,7 +439,11 @@ onUnmounted(() => {
 
 .nav-item:hover {
   background: rgba(234, 242, 251, 0.88);
-  transform: translateX(2px);
+  transform: scale(1.02) translateX(2px);
+}
+
+.nav-item:active {
+  transform: scaleX(var(--jelly-press-x, 1.04)) scaleY(var(--jelly-press-y, 0.96));
 }
 
 .nav-item.active {
@@ -517,13 +532,17 @@ onUnmounted(() => {
   padding: 12px;
   cursor: pointer;
   text-align: left;
-  transition: background var(--transition-fast), border-color var(--transition-fast), transform var(--transition-fast), box-shadow var(--transition-fast);
+  transition: background var(--transition-fast), border-color var(--transition-fast), transform var(--duration-jelly, 400ms) var(--spring-soft, cubic-bezier(0.34, 1.56, 0.64, 1)), box-shadow var(--transition-fast);
 }
 
 .history-item:hover {
   background: rgba(255, 255, 255, 0.98);
-  transform: translateY(-1px);
+  transform: scale(1.02);
   box-shadow: 0 10px 18px rgba(181, 198, 221, 0.12);
+}
+
+.history-item:active {
+  transform: scaleX(1.03) scaleY(0.97);
 }
 
 .history-item.active {
@@ -700,6 +719,18 @@ onUnmounted(() => {
 
   .history-block {
     max-height: 280px;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .brand-mark {
+    animation: none;
+  }
+  .new-chat-btn,
+  .nav-item,
+  .collapse-btn,
+  .history-item {
+    transition-duration: 0.01ms !important;
   }
 }
 </style>

@@ -71,7 +71,7 @@ CREATE INDEX IF NOT EXISTS idx_document_chunk_embedding
 CREATE TABLE IF NOT EXISTS chat_message (
     id BIGSERIAL PRIMARY KEY,
     session_id VARCHAR(64) NOT NULL,
-    kb_id BIGINT NOT NULL REFERENCES knowledge_base(id),
+    kb_id BIGINT REFERENCES knowledge_base(id),
     run_id VARCHAR(64),
     role VARCHAR(16) NOT NULL,
     content TEXT NOT NULL,
@@ -79,6 +79,9 @@ CREATE TABLE IF NOT EXISTS chat_message (
     tool_calls_json JSONB,
     created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
+
+-- Allow kb_id to be NULL for general assistant mode (no knowledge base)
+ALTER TABLE chat_message ALTER COLUMN kb_id DROP NOT NULL;
 
 DO $$ BEGIN
     IF NOT EXISTS (

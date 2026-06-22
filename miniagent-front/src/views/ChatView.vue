@@ -60,7 +60,9 @@
         </div>
       </header>
 
+      <Transition name="retrieval-expand">
       <RetrievalSettings
+        v-if="showRetrievalSettings"
         :visible="showRetrievalSettings"
         :retrieval-options="retrievalOptions"
         @update:retrieval-options="retrievalOptions = $event"
@@ -71,6 +73,7 @@
         :selected-kb-id="selectedKbId"
         @reset="resetRetrievalOptions"
       />
+      </Transition>
 
       <main ref="messagesContainer" class="chat-main">
         <section v-if="!messages.length && !isLoading" class="chat-empty">
@@ -106,7 +109,7 @@
             <article
               v-if="shouldRenderMessage(message)"
               class="message-row"
-              :class="message.role"
+              :class="[message.role, { 'msg-enter': message._isNew }]"
             >
               <div v-if="message.role === 'assistant'" class="message-side">
                 <div class="message-avatar assistant-avatar">
@@ -127,14 +130,15 @@
                 <div
                   v-if="isStreamingMessage(message) && thinkingContent && !message.content"
                   class="thinking-indicator"
+                  :class="{ 'fade-out': thinkingTransition.isTransitioning.value }"
                 >
                   <div class="thinking-icon">
                     <svg width="16" height="16" viewBox="0 0 24 24" fill="none"><circle cx="12" cy="12" r="10" stroke="currentColor" stroke-width="2" stroke-dasharray="4 3"/><path d="M12 6v6l4 2" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
                   </div>
-                  <span>深度思考中</span>
+                  <span>深度思考中<span v-if="thinkingTransition.showEllipsis.value" class="thinking-ellipsis"></span></span>
                 </div>
 
-                <div v-if="message.content" class="message-bubble" :class="{ 'is-streaming': isStreamingMessage(message) }">
+                <div v-if="message.content" class="message-bubble" :class="{ 'is-streaming': isStreamingMessage(message), 'fade-in': thinkingTransition.phase.value === 'answering' && isStreamingMessage(message) }">
                   <div
                     v-if="isStreamingMessage(message)"
                     class="message-stream-md"
@@ -517,6 +521,10 @@ import RetrievalSettings from '@/components/RetrievalSettings.vue'
 import ChatInput from '@/components/ChatInput.vue'
 import { useExecutionTasks } from '@/composables/useExecutionTasks'
 import { useMarkdownRenderer } from '@/composables/useMarkdownRenderer'
+import { useStreamingEngine } from '@/composables/useStreamingEngine'
+import { useIncrementalMarkdown } from '@/composables/useIncrementalMarkdown'
+import { useSmoothScroller } from '@/composables/useSmoothScroller'
+import { useThinkingTransition } from '@/composables/useThinkingTransition'
 import { removeRecentSession, upsertRecentSession } from '@/utils/chatSessions'
 import {
   CloseBold,
@@ -552,10 +560,7 @@ const messagesContainer = ref(null)
 const messagesEndRef = ref(null)
 const isSendingFirstMessage = ref(false)
 const streamingMessage = ref(null)
-const pendingStreamDelta = ref('')
-const pendingFlushHandle = ref(0)
 const currentAbortController = ref(null)
-const autoScrollEnabled = ref(true)
 const showRetrievalSettings = ref(false)
 const retrievalOptions = ref(DEFAULT_RETRIEVAL_OPTIONS())
 const runDetailDialogVisible = ref(false)
@@ -581,6 +586,7 @@ const {
   shortRunId,
   sortAgentSteps
 } = useExecutionTasks()
+
 const STREAM_CONNECT_TIMEOUT_MS = 30000
 const STREAM_IDLE_TIMEOUT_MS = 600000
 const SESSION_SYNC_DELAY_MS = 180
@@ -617,13 +623,23 @@ const selectedExecutableSkillCount = computed(() => {
 })
 
 const streamingMessageHasContent = computed(() => Boolean(streamingMessage.value?.content))
-const showScrollToBottom = computed(() => !autoScrollEnabled.value && messages.value.length > 0)
 
 const {
   initializeMarkdownRenderer,
   renderMarkdown,
   renderStreamMarkdown
 } = useMarkdownRenderer()
+
+// Streaming engine composables
+const streamingEngine = useStreamingEngine({ normalSpeed: 2, fastSpeed: 7, fastThreshold: 100, latencyThreshold: 200 })
+const incrementalMd = useIncrementalMarkdown()
+const smoothScroller = useSmoothScroller()
+const thinkingTransition = useThinkingTransition()
+
+// Expose smooth scroller state for template
+const autoScrollEnabled = smoothScroller.autoScrollEnabled
+const showScrollToBottom = smoothScroller.showScrollToBottom
+
 let sessionSyncTimer = 0
 let scrollStateFrame = 0
 
@@ -804,44 +820,23 @@ function isStreamingMessage(message) {
 }
 
 function flushStreamDelta() {
-  if (!streamingMessage.value || !pendingStreamDelta.value) {
-    pendingFlushHandle.value = 0
-    return
+  streamingEngine.flush()
+  if (streamingMessage.value) {
+    streamingMessage.value.content = streamingEngine.displayedContent.value
   }
-  streamingMessage.value.content += pendingStreamDelta.value
-  pendingStreamDelta.value = ''
-  pendingFlushHandle.value = 0
 }
 
 function appendStreamDelta(delta) {
-  if (!delta) {
-    return
-  }
-  pendingStreamDelta.value += delta
-  if (pendingFlushHandle.value) {
-    return
-  }
-  pendingFlushHandle.value = window.requestAnimationFrame(flushStreamDelta)
+  if (!delta) return
+  streamingEngine.appendChunk(delta)
 }
 
 function updateAutoScrollState() {
-  if (!messagesContainer.value) {
-    autoScrollEnabled.value = true
-    return
-  }
-  const container = messagesContainer.value
-  const distanceToBottom = container.scrollHeight - container.scrollTop - container.clientHeight
-  autoScrollEnabled.value = distanceToBottom < 120
+  // Now handled by useSmoothScroller
 }
 
 function scheduleAutoScrollStateUpdate() {
-  if (scrollStateFrame) {
-    return
-  }
-  scrollStateFrame = window.requestAnimationFrame(() => {
-    scrollStateFrame = 0
-    updateAutoScrollState()
-  })
+  // Now handled by useSmoothScroller
 }
 
 function extractSessionTitle(messageList) {
@@ -956,7 +951,7 @@ async function initializeSessionFromRoute() {
   selectedKbId.value = null
 }
 
-const thinkingContent = ref('')
+const thinkingContent = thinkingTransition.thinkingContent
 
 function createAssistantMessage() {
   return {
@@ -974,7 +969,8 @@ function createAssistantMessage() {
     runStatus: 'RUNNING',
     createdAt: new Date().toISOString(),
     liked: false,
-    disliked: false
+    disliked: false,
+    _isNew: true
   }
 }
 
@@ -1182,7 +1178,8 @@ async function sendMessage() {
     kbId: selectedKbId.value,
     role: 'user',
     content,
-    createdAt: new Date().toISOString()
+    createdAt: new Date().toISOString(),
+    _isNew: true
   })
   syncSessionSummary()
   await scrollToBottom(true)
@@ -1232,7 +1229,10 @@ async function sendMessage() {
         const delta = typeof streamPayload === 'string'
           ? streamPayload
           : (streamPayload?.delta || '')
-        thinkingContent.value += delta
+        if (thinkingTransition.phase.value === 'idle') {
+          thinkingTransition.startThinking()
+        }
+        thinkingTransition.appendThinkingChunk(delta)
       },
       onMessage(streamPayload) {
         hasReceivedStreamEvent = true
@@ -1240,6 +1240,14 @@ async function sendMessage() {
         const delta = typeof streamPayload === 'string'
           ? streamPayload
           : (streamPayload?.delta || '')
+        // Transition from thinking to answering on first message chunk
+        if (thinkingTransition.phase.value === 'thinking') {
+          thinkingTransition.transitionToAnswer()
+        }
+        // Start streaming engine if not already started
+        if (!streamingEngine.isStreaming.value) {
+          streamingEngine.start()
+        }
         appendStreamDelta(delta)
       },
       onReferences(streamPayload) {
@@ -1340,13 +1348,15 @@ async function sendMessage() {
       ElMessage.error(isAbortError ? '流式回答超时，已停止等待' : (error.message || '获取回答失败'))
     }
   } finally {
-    thinkingContent.value = ''
+    // Flush streaming engine and finalize
+    flushStreamDelta()
+    if (streamingMessage.value) {
+      streamingMessage.value.content = streamingEngine.displayedContent.value
+    }
+    streamingEngine.reset()
+    thinkingTransition.reset()
     if (streamTimer) {
       window.clearTimeout(streamTimer)
-    }
-    if (pendingFlushHandle.value) {
-      window.cancelAnimationFrame(pendingFlushHandle.value)
-      flushStreamDelta()
     }
     currentAbortController.value = null
     isLoading.value = false
@@ -1385,19 +1395,11 @@ function stopGenerating() {
 
 async function scrollToBottom(force = false) {
   await nextTick()
-  requestAnimationFrame(() => {
-    if (!force && !autoScrollEnabled.value) {
-      return
-    }
-    if (messagesEndRef.value?.scrollIntoView) {
-      messagesEndRef.value.scrollIntoView({ block: 'end' })
-    }
-
-    if (messagesContainer.value) {
-      messagesContainer.value.scrollTop = messagesContainer.value.scrollHeight
-      autoScrollEnabled.value = true
-    }
-  })
+  if (force) {
+    smoothScroller.scrollToBottom()
+  } else {
+    smoothScroller.onContentUpdated()
+  }
 }
 
 async function copyMessage(content) {
@@ -1494,19 +1496,32 @@ watch(
   { flush: 'post' }
 )
 
+// Sync streaming engine output to the streaming message
+watch(
+  () => streamingEngine.displayedContent.value,
+  (newContent) => {
+    if (streamingMessage.value && newContent) {
+      streamingMessage.value.content = newContent
+    }
+  }
+)
+
 watch(
   () => streamingMessage.value?.content,
   async () => {
     if (!streamingMessage.value?.content) {
       return
     }
-    await scrollToBottom()
+    smoothScroller.onContentUpdated()
   },
   { flush: 'post' }
 )
 
 onMounted(async () => {
-  messagesContainer.value?.addEventListener('scroll', scheduleAutoScrollStateUpdate, { passive: true })
+  // Bind smooth scroller to messages container
+  if (messagesContainer.value) {
+    smoothScroller.bindContainer(messagesContainer.value)
+  }
   try {
     initializeMarkdownRenderer().catch(() => {
       ElMessage.warning('Markdown 渲染组件加载稍慢，已先使用轻量预览')
@@ -1523,10 +1538,7 @@ onMounted(async () => {
 })
 
 onBeforeUnmount(() => {
-  messagesContainer.value?.removeEventListener('scroll', scheduleAutoScrollStateUpdate)
-  if (pendingFlushHandle.value) {
-    window.cancelAnimationFrame(pendingFlushHandle.value)
-  }
+  smoothScroller.unbind()
   if (scrollStateFrame) {
     window.cancelAnimationFrame(scrollStateFrame)
   }
@@ -1572,13 +1584,16 @@ onBeforeUnmount(() => {
   align-items: center;
   justify-content: space-between;
   gap: 16px;
-  padding: 14px 16px;
-  border-radius: 22px;
-  background: linear-gradient(180deg, rgba(255, 255, 255, 0.88), rgba(246, 250, 255, 0.92));
-  border: 1px solid rgba(191, 210, 230, 0.42);
+  padding: 12px 18px;
+  border-radius: 999px;
+  background: linear-gradient(135deg, rgba(255, 255, 255, 0.92), rgba(248, 252, 255, 0.96));
+  border: 1px solid rgba(200, 218, 238, 0.35);
   box-shadow:
-    inset 0 1px 0 rgba(255, 255, 255, 0.88),
-    0 10px 24px rgba(164, 182, 207, 0.12);
+    inset 0 1px 0 rgba(255, 255, 255, 0.9),
+    0 4px 16px rgba(164, 182, 207, 0.1),
+    0 1px 3px rgba(164, 182, 207, 0.06);
+  backdrop-filter: blur(12px) saturate(140%);
+  -webkit-backdrop-filter: blur(12px) saturate(140%);
 }
 
 .toolbar-left {
@@ -1609,30 +1624,35 @@ onBeforeUnmount(() => {
 .mode-switch {
   display: inline-flex;
   align-items: center;
-  gap: 8px;
-  padding: 4px;
+  gap: 4px;
+  padding: 3px;
   border-radius: 999px;
-  background: rgba(255, 255, 255, 0.86);
-  border: 1px solid rgba(193, 208, 225, 0.9);
-  box-shadow: 0 8px 18px rgba(170, 188, 210, 0.12);
+  background: rgba(241, 245, 249, 0.9);
+  border: 1px solid rgba(210, 222, 236, 0.6);
+  box-shadow: inset 0 1px 2px rgba(0, 0, 0, 0.03);
 }
 
 .mode-chip {
   border: 0;
   background: transparent;
-  color: #5f6f85;
+  color: #7a8ca4;
   border-radius: 999px;
-  padding: 8px 14px;
-  font-size: 13px;
-  font-weight: 700;
+  padding: 7px 14px;
+  font-size: 12.5px;
+  font-weight: 600;
   cursor: pointer;
-  transition: background var(--transition-fast), color var(--transition-fast), box-shadow var(--transition-fast);
+  transition: all var(--duration-jelly, 400ms) var(--spring-soft, cubic-bezier(0.34, 1.56, 0.64, 1));
+}
+
+.mode-chip:hover {
+  color: #4a5e75;
 }
 
 .mode-chip.active {
-  background: linear-gradient(135deg, rgba(219, 238, 255, 0.98), rgba(204, 228, 255, 0.98));
-  color: #1f4b7b;
-  box-shadow: inset 0 0 0 1px rgba(152, 187, 224, 0.82);
+  background: #ffffff;
+  color: #1a3a5c;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.06), 0 0 0 1px rgba(0, 0, 0, 0.04);
+  font-weight: 700;
 }
 
 .kb-select {
@@ -1640,12 +1660,15 @@ onBeforeUnmount(() => {
 }
 
 .ghost-btn {
-  min-width: 110px;
+  min-width: 100px;
 }
 
 .chat-header-actions :deep(.el-select .el-input__wrapper) {
-  background: rgba(255, 255, 255, 0.96) !important;
-  box-shadow: 0 0 0 1px rgba(148, 163, 184, 0.22) inset !important;
+  background: rgba(255, 255, 255, 0.92) !important;
+  border-radius: 999px !important;
+  box-shadow: 0 0 0 1px rgba(200, 215, 232, 0.5) inset !important;
+  padding: 0 12px !important;
+  height: 34px !important;
 }
 
 .chat-header-actions :deep(.el-select__placeholder),
@@ -1653,25 +1676,74 @@ onBeforeUnmount(() => {
 .chat-header-actions :deep(.el-input__inner),
 .chat-header-actions :deep(.el-select__caret),
 .chat-header-actions :deep(.el-input__icon) {
-  color: #0f172a !important;
+  color: #3d5068 !important;
+  font-size: 12.5px !important;
 }
 
 .chat-header-actions :deep(.el-button) {
-  background: rgba(255, 255, 255, 0.96) !important;
-  border-color: rgba(148, 163, 184, 0.24) !important;
-  color: #0f172a !important;
+  background: rgba(255, 255, 255, 0.92) !important;
+  border-color: rgba(200, 215, 232, 0.5) !important;
+  border-radius: 999px !important;
+  color: #3d5068 !important;
+  font-size: 12.5px !important;
+  height: 34px !important;
+  padding: 0 14px !important;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.04) !important;
+  transition: all var(--duration-jelly, 400ms) var(--spring-soft, cubic-bezier(0.34, 1.56, 0.64, 1)) !important;
+}
+
+.chat-header-actions :deep(.el-button:hover) {
+  transform: scale(1.02);
+  box-shadow: 0 3px 10px rgba(0, 0, 0, 0.08) !important;
+  background: #ffffff !important;
 }
 
 .chat-header-actions :deep(.el-button span),
 .chat-header-actions :deep(.el-button .el-icon) {
-  color: #0f172a !important;
+  color: #3d5068 !important;
 }
 
 .retrieval-panel {
-  padding: 16px;
-  border-radius: 22px;
-  background: linear-gradient(180deg, rgba(255, 255, 255, 0.84), rgba(246, 250, 255, 0.9));
-  border: 1px solid rgba(193, 211, 229, 0.4);
+  padding: 18px 20px;
+  border-radius: 24px;
+  background: linear-gradient(135deg, rgba(255, 255, 255, 0.88), rgba(248, 252, 255, 0.94));
+  border: 1px solid rgba(210, 225, 240, 0.4);
+  box-shadow: 0 4px 16px rgba(164, 182, 207, 0.08);
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
+  overflow: hidden;
+  transform-origin: top center;
+}
+
+/* Elastic expand/collapse transition for settings panel */
+.retrieval-expand-enter-active {
+  transition: transform var(--duration-jelly, 400ms) var(--spring-soft, cubic-bezier(0.34, 1.56, 0.64, 1)),
+              opacity var(--duration-jelly, 400ms) ease;
+}
+
+.retrieval-expand-leave-active {
+  transition: transform 250ms ease-in,
+              opacity 200ms ease-in;
+}
+
+.retrieval-expand-enter-from {
+  transform: scaleY(0.6) scaleX(0.98);
+  opacity: 0;
+}
+
+.retrieval-expand-enter-to {
+  transform: scaleY(1) scaleX(1);
+  opacity: 1;
+}
+
+.retrieval-expand-leave-from {
+  transform: scaleY(1) scaleX(1);
+  opacity: 1;
+}
+
+.retrieval-expand-leave-to {
+  transform: scaleY(0.6) scaleX(0.98);
+  opacity: 0;
 }
 
 .retrieval-grid {
@@ -1715,9 +1787,10 @@ onBeforeUnmount(() => {
 }
 
 .setting-label {
-  color: var(--text-secondary);
-  font-size: 12px;
-  font-weight: 700;
+  color: var(--text-muted);
+  font-size: 11.5px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
 }
 
 .setting-inline {
@@ -1790,7 +1863,12 @@ onBeforeUnmount(() => {
     drop-shadow(0 0 10px rgba(255, 255, 255, 0.42))
     drop-shadow(0 0 22px rgba(115, 130, 255, 0.34))
     drop-shadow(0 0 42px rgba(115, 130, 255, 0.26));
-  animation: iconAura 3.4s ease-in-out infinite;
+  animation: breathe var(--duration-breathe, 4s) ease-in-out infinite;
+  will-change: transform, opacity;
+}
+
+.empty-icon:hover {
+  animation-play-state: paused;
 }
 
 .empty-glow {
@@ -1840,13 +1918,18 @@ onBeforeUnmount(() => {
   font-size: 12px;
   font-weight: 700;
   cursor: pointer;
-  transition: all var(--transition-fast);
+  transition: all var(--duration-jelly, 400ms) var(--spring-soft, cubic-bezier(0.34, 1.56, 0.64, 1));
 }
 
 .prompt-chip:hover {
   color: #24364d;
   border-color: rgba(91, 108, 255, 0.22);
   background: rgba(240, 246, 255, 0.98);
+  transform: scale(var(--jelly-hover-scale, 1.03));
+}
+
+.prompt-chip:active {
+  transform: scaleX(var(--jelly-press-x, 1.04)) scaleY(var(--jelly-press-y, 0.96));
 }
 
 .message-list {
@@ -1874,6 +1957,21 @@ onBeforeUnmount(() => {
 
 .message-row.user {
   justify-content: flex-end;
+}
+
+/* Message entrance animations */
+.message-row.assistant.msg-enter {
+  animation: message-enter-left var(--duration-entrance, 380ms) var(--spring-soft, cubic-bezier(0.34, 1.56, 0.64, 1)) both;
+}
+
+.message-row.user.msg-enter {
+  animation: message-enter-right var(--duration-entrance, 380ms) var(--spring-soft, cubic-bezier(0.34, 1.56, 0.64, 1)) both;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .message-row.msg-enter {
+    animation: none !important;
+  }
 }
 
 .message-side {
@@ -2075,7 +2173,11 @@ onBeforeUnmount(() => {
   vertical-align: text-bottom;
   background: var(--primary-color);
   border-radius: 2px;
-  animation: cursorBlink 0.88s step-end infinite;
+  animation: cursorBlink 1s ease-in-out infinite;
+}
+
+.stream-cursor.fade-out {
+  animation: cursorFadeOut 0.3s ease-out forwards;
 }
 
 .thinking-indicator {
@@ -2090,6 +2192,33 @@ onBeforeUnmount(() => {
   font-size: 13px;
   font-weight: 600;
   animation: thinkingPulse 2s ease-in-out infinite;
+  transition: opacity 0.2s ease-out;
+}
+
+.thinking-indicator.fade-out {
+  opacity: 0;
+  transition: opacity 0.2s ease-out;
+}
+
+.message-bubble.fade-in {
+  animation: answerFadeIn 0.15s ease-in forwards;
+}
+
+.thinking-ellipsis::after {
+  content: '';
+  animation: ellipsis 1.5s steps(3, end) infinite;
+}
+
+@keyframes answerFadeIn {
+  from { opacity: 0; transform: translateY(4px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+@keyframes ellipsis {
+  0% { content: ''; }
+  33% { content: '.'; }
+  66% { content: '..'; }
+  100% { content: '...'; }
 }
 
 .thinking-icon {
@@ -3212,19 +3341,26 @@ onBeforeUnmount(() => {
 }
 
 .loading-bubble span {
-  width: 8px;
-  height: 8px;
+  width: 10px;
+  height: 10px;
   border-radius: 50%;
-  background: rgba(91, 108, 255, 0.7);
-  animation: pulse 1.1s infinite ease-in-out;
+  background: linear-gradient(135deg, rgba(91, 108, 255, 0.8), rgba(123, 211, 255, 0.7));
+  animation: jelly-bounce 1000ms var(--spring-bounce, cubic-bezier(0.68, -0.55, 0.265, 1.55)) infinite;
+  will-change: transform;
 }
 
 .loading-bubble span:nth-child(2) {
-  animation-delay: 0.15s;
+  animation-delay: 150ms;
 }
 
 .loading-bubble span:nth-child(3) {
-  animation-delay: 0.3s;
+  animation-delay: 300ms;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .loading-bubble span {
+    animation: none !important;
+  }
 }
 
 .scroll-to-latest-btn {
@@ -3246,10 +3382,18 @@ onBeforeUnmount(() => {
   font-weight: 800;
   box-shadow: 0 12px 28px rgba(157, 178, 203, 0.18);
   backdrop-filter: blur(14px);
+  cursor: pointer;
+  transition: transform var(--duration-jelly, 400ms) var(--spring-soft, cubic-bezier(0.34, 1.56, 0.64, 1)), box-shadow var(--transition-fast), background var(--transition-fast);
 }
 
 .scroll-to-latest-btn:hover {
   background: #ffffff;
+  transform: scale(var(--jelly-hover-scale, 1.03));
+  box-shadow: 0 16px 36px rgba(157, 178, 203, 0.24);
+}
+
+.scroll-to-latest-btn:active {
+  transform: scaleX(var(--jelly-press-x, 1.04)) scaleY(var(--jelly-press-y, 0.96));
 }
 
 @keyframes pulse {
@@ -3265,7 +3409,12 @@ onBeforeUnmount(() => {
 
 @keyframes cursorBlink {
   0%, 100% { opacity: 1; }
-  50% { opacity: 0; }
+  50% { opacity: 0.2; }
+}
+
+@keyframes cursorFadeOut {
+  from { opacity: 1; }
+  to { opacity: 0; }
 }
 
 @keyframes thinkingPulse {
