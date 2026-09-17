@@ -24,6 +24,9 @@
 | `BAD_REQUEST` | 参数校验失败或业务逻辑错误 |
 | `NOT_FOUND` | 资源不存在 |
 | `INTERNAL_ERROR` | 服务器内部错误 |
+| `UNAUTHORIZED` | 未登录或登录已过期 |
+| `FORBIDDEN` | 无权限访问 |
+| `CONFLICT` | 冲突（如会话正在处理中，请稍后再试） |
 
 错误响应示例：
 
@@ -69,6 +72,7 @@ Content-Type: application/json
   "runStatus": "COMPLETED",
   "answer": "这是AI的回答...",
   "answerMode": "agent",
+  "clarification": null,
   "retrievalConfig": {
     "topK": 4,
     "scoreThreshold": 0.600,
@@ -85,6 +89,14 @@ Content-Type: application/json
   "agentSteps": [...]
 }
 ```
+
+`answerMode` 取值：
+
+| 值 | 说明 |
+|------|------|
+| `agent` | 走 Agent 编排（KB/MCP） |
+| `chat` | 直连 LLM（SYSTEM 意图） |
+| `clarify` | 澄清追问，`clarification` 字段为追问内容，`answer` 同步回填 |
 
 ### 1.2 流式聊天（SSE）
 
@@ -104,6 +116,7 @@ Accept: text/event-stream
 | `ping` | 心跳（每10秒） | `{"ts":1234567890}` |
 | `thinking` | 思考内容增量 | `{"delta":"思考片段..."}` |
 | `message` | 回答内容增量 | `{"delta":"回答片段..."}` |
+| `clarify` | 澄清追问（问题模糊时触发，随后发 `done` 结束流） | `{"clarification":"追问内容"}` |
 | `run_status` | Agent运行状态变更 | `{"runId":"...","status":"RUNNING"}` |
 | `agent_step` | Agent执行步骤 | AgentStep对象 |
 | `agent_plan` | Agent计划更新 | `{"runId":"...","tasks":[...],"currentActionKey":"...","completedTaskKeys":[...]}` |
@@ -452,3 +465,86 @@ POST /api/skills/reload
 ```
 
 从磁盘重新加载所有Skill定义。
+
+---
+
+## 7. 认证 `/api/auth`
+
+> 除 `login` / `register` 外，所有 `/api/**` 接口均需携带 `Authorization: Bearer <token>`。
+
+### 7.1 注册
+
+```
+POST /api/auth/register
+Content-Type: application/json
+```
+
+**请求体：**
+
+```json
+{
+  "username": "testuser",
+  "password": "123456"
+}
+```
+
+**响应：** `LoginResponse`（含 `token` 与用户信息），注册成功即自动登录。
+
+### 7.2 登录
+
+```
+POST /api/auth/login
+Content-Type: application/json
+```
+
+**请求体：**
+
+```json
+{
+  "username": "testuser",
+  "password": "123456"
+}
+```
+
+**响应：**
+
+```json
+{
+  "token": "xxxx-xxxx-xxxx",
+  "user": {
+    "id": 1,
+    "username": "testuser",
+    "role": "USER"
+  }
+}
+```
+
+### 7.3 登出
+
+```
+POST /api/auth/logout
+```
+
+### 7.4 获取当前用户
+
+```
+GET /api/auth/me
+```
+
+**响应：** 当前登录用户信息。
+
+---
+
+## 8. 会话并发控制
+
+同一会话同时发起多条消息时，后到的请求会收到：
+
+```json
+{
+  "code": "CONFLICT",
+  "message": "当前会话正在处理中，请稍后再试",
+  "data": null
+}
+```
+
+保证同一会话的消息串行执行，避免上下文互相污染。流式接口（SSE）会在 `error` 事件中返回相同提示。

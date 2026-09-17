@@ -1,0 +1,30 @@
+{
+  "kbId": 1,
+  "topK": 4,
+  "queries": [
+    {
+      "question": "公司报销流程分为哪几个步骤？",
+      "expectedDocuments": ["aaa.txt"]
+    },
+    {
+      "question": "deepseek 最新发布的模型是什么？",
+      "expectedDocuments": ["task.txt"]
+    },
+    {
+      "question": "图灵测试是哪位科学家在什么时候提出的？",
+      "expectedDocuments": ["introduce.txt"]
+    },
+    {
+      "question": "什么是检索增强生成 RAG？",
+      "expectedDocuments": ["aaa.txt"]
+    },
+    {
+      "question": "RAG 系统检索不到内容时该怎么处理？",
+      "expectedDocuments": ["aaa.txt"]
+    },
+    {
+      "question": "Mini Ragent 端到端验证流程包含哪些环节？",
+      "expectedDocuments": ["e2e.txt"]
+    }
+  ]
+}

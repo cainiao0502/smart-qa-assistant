@@ -45,7 +45,10 @@ CREATE TABLE IF NOT EXISTS document_chunk (
     chunk_text TEXT NOT NULL,
     token_estimate INT NOT NULL DEFAULT 0,
     paragraph_index INT DEFAULT 0,
-    embedding VECTOR(1536) NOT NULL,
+    -- 维度必须与 ai.embedding 所选模型的输出维度一致，换模型时需同步修改此处并重建索引：
+    --   Qwen/Qwen3-Embedding-0.6B (SiliconFlow) = 1024
+    --   text-embedding-ada-002 / MiniMax embo-01 = 1536
+    embedding VECTOR(1024) NOT NULL,
     created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
     CONSTRAINT uk_document_chunk UNIQUE (doc_id, chunk_index)
 );
@@ -63,10 +66,12 @@ END $$;
 CREATE INDEX IF NOT EXISTS idx_document_chunk_doc_id ON document_chunk(doc_id);
 CREATE INDEX IF NOT EXISTS idx_document_chunk_kb_id ON document_chunk(kb_id);
 
+-- Use HNSW index for efficient approximate nearest neighbor search.
+-- HNSW handles kb_id + embedding combined queries better than IVFFlat.
+-- Requires pgvector >= 0.5.0.
 CREATE INDEX IF NOT EXISTS idx_document_chunk_embedding
     ON document_chunk
-    USING ivfflat (embedding vector_cosine_ops)
-    WITH (lists = 100);
+    USING hnsw (embedding vector_cosine_ops);
 
 CREATE TABLE IF NOT EXISTS chat_message (
     id BIGSERIAL PRIMARY KEY,
@@ -172,9 +177,25 @@ END $$;
 CREATE INDEX IF NOT EXISTS idx_document_task_doc_id ON document_task(doc_id);
 -- 按状态筛选任务（如查所有正在执行的任务）
 CREATE INDEX IF NOT EXISTS idx_document_task_status ON document_task(status);
+-- 按状态+时间筛选过期任务，加速 DocumentTaskScheduler.retryStaleTasks
+CREATE INDEX IF NOT EXISTS idx_document_task_status_updated
+    ON document_task (status, updated_at);
 
 INSERT INTO knowledge_base (name, description)
 SELECT 'default_kb', 'Mini Ragent default knowledge base'
 WHERE NOT EXISTS (
     SELECT 1 FROM knowledge_base WHERE name = 'default_kb'
 );
+
+-- 用户表：sa-token 登录注册功能依赖（AuthController / UserService / UserMapper）
+CREATE TABLE IF NOT EXISTS t_user (
+    id BIGSERIAL PRIMARY KEY,
+    username VARCHAR(64) NOT NULL UNIQUE,
+    password_hash VARCHAR(255) NOT NULL,
+    role VARCHAR(32) NOT NULL DEFAULT 'USER',
+    created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE INDEX IF NOT EXISTS idx_t_user_username ON t_user(username);
+CREATE INDEX IF NOT EXISTS idx_t_user_role ON t_user(role);
