@@ -4,5 +4,8 @@ public enum ErrorCode {
     SUCCESS,
     BAD_REQUEST,
     NOT_FOUND,
-    INTERNAL_ERROR
+    INTERNAL_ERROR,
+    UNAUTHORIZED,
+    FORBIDDEN,
+    CONFLICT
 }

@@ -1,7 +1,7 @@
 package com.nailinai.ragent.infra.router;
 
 import com.nailinai.ragent.infra.chat.ChatClient;
-import com.nailinai.ragent.infra.chat.ChatRequest;
+import com.nailinai.ragent.infra.chat.LlmRequest;
 import com.nailinai.ragent.infra.chat.ChatResponse;
 import com.nailinai.ragent.infra.chat.StreamCallback;
 import com.nailinai.ragent.infra.embedding.EmbeddingClient;
@@ -37,7 +37,7 @@ public class ModelRouter implements ChatClient, EmbeddingClient {
     }
 
     @Override
-    public ChatResponse chat(ChatRequest request) {
+    public ChatResponse chat(LlmRequest request) {
         ensureChatCandidates();
         IllegalStateException lastException = null;
         for (ChatClient candidate : chatCandidates) {
@@ -63,8 +63,9 @@ public class ModelRouter implements ChatClient, EmbeddingClient {
     }
 
     @Override
-    public void streamChat(ChatRequest request, StreamCallback callback) {
+    public void streamChat(LlmRequest request, StreamCallback callback) {
         ensureChatCandidates();
+        ErrorHolder lastError = new ErrorHolder();
         for (ChatClient candidate : chatCandidates) {
             String provider = candidate.name();
             if (!healthStore.allowCall(provider)) {
@@ -73,6 +74,7 @@ public class ModelRouter implements ChatClient, EmbeddingClient {
             }
             final String currentProvider = provider;
             try {
+                final boolean[] completed = {false};
                 candidate.streamChat(request, new StreamCallback() {
                     @Override
                     public void onReasoning(String delta) {
@@ -86,23 +88,34 @@ public class ModelRouter implements ChatClient, EmbeddingClient {
 
                     @Override
                     public void onComplete() {
+                        completed[0] = true;
                         healthStore.markSuccess(currentProvider);
                         callback.onComplete();
                     }
 
                     @Override
                     public void onError(Throwable ex) {
+                        completed[0] = true;
                         healthStore.markFailure(currentProvider);
+                        lastError.error = new IllegalStateException(
+                                "stream chat provider " + currentProvider + " failed: " + ex.getMessage(), ex);
                         log.warn("Stream chat provider {} failed, trying next candidate", currentProvider, ex);
                     }
                 });
-                return;
+                if (completed[0] && lastError.error != null) {
+                    continue; // onError was called, try next candidate
+                }
+                return; // stream completed or is in progress
             } catch (RuntimeException ex) {
                 healthStore.markFailure(provider);
+                lastError.error = new IllegalStateException(
+                        "stream chat provider " + provider + " threw before streaming: " + ex.getMessage(), ex);
                 log.warn("Stream chat provider {} threw before streaming, trying next", provider, ex);
             }
         }
-        callback.onError(new IllegalStateException("no chat provider available for streaming"));
+        callback.onError(lastError.error != null
+                ? lastError.error
+                : new IllegalStateException("no chat provider available for streaming"));
     }
 
     @Override
@@ -171,5 +184,9 @@ public class ModelRouter implements ChatClient, EmbeddingClient {
         if (embeddingCandidates == null || embeddingCandidates.isEmpty()) {
             throw new IllegalStateException("no embedding candidate configured");
         }
+    }
+
+    private static class ErrorHolder {
+        volatile IllegalStateException error;
     }
 }

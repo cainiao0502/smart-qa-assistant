@@ -3,10 +3,13 @@ package com.nailinai.ragent.infra.config;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.nailinai.ragent.infra.chat.ChatClient;
 import com.nailinai.ragent.infra.chat.OpenAICompatibleChatClient;
+import com.nailinai.ragent.infra.embedding.CachingEmbeddingClient;
 import com.nailinai.ragent.infra.embedding.EmbeddingClient;
 import com.nailinai.ragent.infra.embedding.OpenAICompatibleEmbeddingClient;
 import com.nailinai.ragent.infra.router.ModelHealthStore;
 import com.nailinai.ragent.infra.router.ModelRouter;
+import com.nailinai.ragent.infra.vision.OpenAICompatibleVisionClient;
+import com.nailinai.ragent.infra.vision.VisionClient;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnMissingBean;
@@ -45,6 +48,7 @@ public class InfraAiAutoConfiguration {
                     candidate.getModel(),
                     properties.getRetry().getMaxAttempts(),
                     properties.getRetry().getBackoffMs(),
+                    properties.getTimeout().getStreamTimeoutMs(),
                     objectMapper
             ));
             log.info("Registered chat candidate: provider={}, model={}", candidate.getProvider(), candidate.getModel());
@@ -64,12 +68,14 @@ public class InfraAiAutoConfiguration {
                 log.warn("Skip embedding candidate {} due to missing base-url or api-key", candidate.getProvider());
                 continue;
             }
-            candidates.add(new OpenAICompatibleEmbeddingClient(
-                    candidate.getProvider(),
-                    candidate.getBaseUrl(),
-                    candidate.getApiKey(),
-                    candidate.getModel(),
-                    objectMapper
+            candidates.add(new CachingEmbeddingClient(
+                    new OpenAICompatibleEmbeddingClient(
+                            candidate.getProvider(),
+                            candidate.getBaseUrl(),
+                            candidate.getApiKey(),
+                            candidate.getModel(),
+                            objectMapper
+                    ), 256
             ));
             log.info("Registered embedding candidate: provider={}, model={}", candidate.getProvider(), candidate.getModel());
         }
@@ -77,6 +83,38 @@ public class InfraAiAutoConfiguration {
             throw new IllegalStateException("No valid embedding candidate configured under ai.embedding.candidates");
         }
         return new ModelRouter(List.of(), candidates, modelHealthStore());
+    }
+
+    /**
+     * 视觉模型客户端（可选能力）。
+     *
+     * <p>未配置时返回「不可用」实现，让调用方（图片文档解析）退化为纯文本行为，
+     * 而不是在启动期直接失败——图片理解是增量特性，不该阻塞主链路启动。
+     */
+    @Bean
+    @ConditionalOnMissingBean
+    public VisionClient visionClient(AiProperties properties, ObjectMapper objectMapper) {
+        AiProperties.Vision vision = properties.getVision();
+        if (!vision.isEnabled()
+                || isBlank(vision.getBaseUrl())
+                || isBlank(vision.getApiKey())
+                || isBlank(vision.getModel())) {
+            log.info("Vision model is not configured; image documents will be indexed as empty text. "
+                    + "Set ai.vision.* to enable image understanding.");
+            return VisionClient.unavailable();
+        }
+        ChatClient visionChatClient = new OpenAICompatibleChatClient(
+                isBlank(vision.getProvider()) ? "vision" : vision.getProvider(),
+                vision.getBaseUrl(),
+                vision.getApiKey(),
+                vision.getModel(),
+                properties.getRetry().getMaxAttempts(),
+                properties.getRetry().getBackoffMs(),
+                properties.getTimeout().getStreamTimeoutMs(),
+                objectMapper
+        );
+        log.info("Registered vision model: provider={}, model={}", vision.getProvider(), vision.getModel());
+        return new OpenAICompatibleVisionClient(visionChatClient);
     }
 
     private boolean isBlank(String value) {
