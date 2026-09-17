@@ -2,6 +2,7 @@ package com.nailinai.ragent.agent;
 
 import com.nailinai.ragent.agent.dto.AgentRun;
 import com.nailinai.ragent.agent.dto.AgentStep;
+import com.nailinai.ragent.agent.dto.RunUsage;
 import com.nailinai.ragent.framework.common.BusinessException;
 import com.nailinai.ragent.framework.common.ErrorCode;
 import com.nailinai.ragent.dto.response.AgentRunDetailResponse;
@@ -10,6 +11,8 @@ import com.nailinai.ragent.entity.AgentStepEntity;
 import com.nailinai.ragent.mapper.AgentRunMapper;
 import com.nailinai.ragent.mapper.AgentStepMapper;
 import com.nailinai.ragent.framework.util.JsonUtils;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.util.StringUtils;
 import org.springframework.stereotype.Service;
 
@@ -18,6 +21,8 @@ import java.util.Map;
 
 @Service
 public class AgentRunStore {
+
+    private static final Logger log = LoggerFactory.getLogger(AgentRunStore.class);
 
     private final AgentRunMapper agentRunMapper;
     private final AgentStepMapper agentStepMapper;
@@ -57,11 +62,32 @@ public class AgentRunStore {
     }
 
     public void completeRun(String runId, String status, String finalAnswer) {
+        completeRun(runId, status, finalAnswer, null);
+    }
+
+    /**
+     * 完成运行并落库成本/耗时统计。
+     *
+     * <p>统计信息与状态写在同一条 UPDATE 里，避免"状态已结束但统计还没写"的中间态；
+     * usage 为 null 时（异常路径）对应列保持原值。
+     */
+    public void completeRun(String runId, String status, String finalAnswer, RunUsage usage) {
         AgentRunEntity entity = new AgentRunEntity();
         entity.setRunId(runId);
         entity.setStatus(status);
         entity.setFinalAnswer(finalAnswer);
-        agentRunMapper.updateResult(entity);
+        if (usage != null) {
+            entity.setDurationMs(usage.loopDurationMs());
+            entity.setLlmCalls(usage.llmCalls());
+            entity.setInputTokens(usage.inputTokens());
+            entity.setOutputTokens(usage.outputTokens());
+            entity.setCachedTokens(usage.cachedTokens());
+            entity.setReasoningTokens(usage.reasoningTokens());
+        }
+        int updated = agentRunMapper.updateResult(entity);
+        if (updated == 0) {
+            log.warn("completeRun: no row updated for runId={}", runId);
+        }
     }
 
     public AgentRunDetailResponse getRunDetail(String runId) {

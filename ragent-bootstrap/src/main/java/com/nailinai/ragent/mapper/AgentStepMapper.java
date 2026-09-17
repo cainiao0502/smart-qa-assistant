@@ -5,6 +5,7 @@ import org.apache.ibatis.annotations.Insert;
 import org.apache.ibatis.annotations.Mapper;
 import org.apache.ibatis.annotations.Options;
 import org.apache.ibatis.annotations.Select;
+import org.apache.ibatis.annotations.Delete;
 
 import java.util.List;
 
@@ -36,4 +37,10 @@ public interface AgentStepMapper {
             ORDER BY step_index ASC, id ASC
             """)
     List<AgentStepEntity> selectByRunId(String runId);
+
+    @Delete("""
+            DELETE FROM agent_step
+            WHERE run_id IN (SELECT run_id FROM agent_run WHERE kb_id = #{kbId})
+            """)
+    int deleteByKbId(Long kbId);
 }

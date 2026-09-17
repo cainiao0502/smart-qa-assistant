@@ -6,6 +6,7 @@ import org.apache.ibatis.annotations.Mapper;
 import org.apache.ibatis.annotations.Options;
 import org.apache.ibatis.annotations.Select;
 import org.apache.ibatis.annotations.Update;
+import org.apache.ibatis.annotations.Delete;
 
 @Mapper
 public interface AgentRunMapper {
@@ -25,6 +26,12 @@ public interface AgentRunMapper {
                    user_goal AS userGoal,
                    status,
                    final_answer AS finalAnswer,
+                   duration_ms AS durationMs,
+                   llm_calls AS llmCalls,
+                   input_tokens AS inputTokens,
+                   output_tokens AS outputTokens,
+                   cached_tokens AS cachedTokens,
+                   reasoning_tokens AS reasoningTokens,
                    created_at AS createdAt,
                    updated_at AS updatedAt
             FROM agent_run
@@ -36,8 +43,20 @@ public interface AgentRunMapper {
             UPDATE agent_run
             SET status = #{status},
                 final_answer = #{finalAnswer},
+                duration_ms = #{durationMs},
+                llm_calls = #{llmCalls},
+                input_tokens = #{inputTokens},
+                output_tokens = #{outputTokens},
+                cached_tokens = #{cachedTokens},
+                reasoning_tokens = #{reasoningTokens},
                 updated_at = CURRENT_TIMESTAMP
             WHERE run_id = #{runId}
             """)
     int updateResult(AgentRunEntity agentRun);
+
+    @Delete("""
+            DELETE FROM agent_run
+            WHERE kb_id = #{kbId}
+            """)
+    int deleteByKbId(Long kbId);
 }

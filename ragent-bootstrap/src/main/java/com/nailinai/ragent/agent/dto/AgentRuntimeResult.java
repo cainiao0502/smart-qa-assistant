@@ -23,4 +23,7 @@ public class AgentRuntimeResult {
     private List<String> supplementalContexts;
     private String finalInstruction;
     private String answerMode;
+
+    /** 本轮运行的成本与耗时统计（落库 / SSE 下发 / 日志共用同一份数据） */
+    private RunUsage usage;
 }

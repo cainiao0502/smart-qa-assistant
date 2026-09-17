@@ -52,7 +52,8 @@ public class FinalAnswerComposer {
                 runtimeResult.getRetrievalResult().getChunks(),
                 supplementalContext,
                 buildDocumentCatalog(request.getKbId()),
-                skillRegistry.renderSkillContext(request.getSkillNames()),
+                // 渐进式披露：这里只带技能目录；模型调 load_skill 的正文已随 supplementalContexts 进入
+                skillRegistry.renderSkillCatalog(request.getSkillNames()),
                 request.getKbId() != null
         );
     }

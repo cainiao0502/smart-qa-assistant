@@ -23,4 +23,11 @@ public interface ChatService {
     void deleteSession(String sessionId);
 
     AgentRunDetailResponse getRunDetail(String runId);
+
+    /**
+     * 提交一次工具审批决定（仅发起该次运行的用户可提交）。
+     *
+     * @return 是否命中了一个仍在等待、且属于当前用户的审批
+     */
+    boolean decideApproval(String approvalId, boolean approved);
 }

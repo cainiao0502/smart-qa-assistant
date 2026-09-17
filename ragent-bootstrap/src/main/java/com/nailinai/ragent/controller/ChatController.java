@@ -1,12 +1,15 @@
 package com.nailinai.ragent.controller;
 
 import com.nailinai.ragent.framework.common.Result;
+import com.nailinai.ragent.framework.common.ErrorCode;
+import com.nailinai.ragent.dto.request.ApprovalDecisionRequest;
 import com.nailinai.ragent.dto.request.ChatRequest;
 import com.nailinai.ragent.dto.response.AgentRunDetailResponse;
 import com.nailinai.ragent.dto.response.ChatResponse;
 import com.nailinai.ragent.dto.response.SessionSummaryResponse;
 import com.nailinai.ragent.entity.ChatMessage;
 import com.nailinai.ragent.chat.service.ChatService;
+import com.nailinai.ragent.user.context.UserIdHolder;
 import jakarta.validation.Valid;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.MediaType;
@@ -55,7 +58,18 @@ public class ChatController {
             emitter.completeWithError(ex);
             return ResponseEntity.internalServerError().body(emitter);
         }
-        CompletableFuture.runAsync(() -> chatService.streamChat(request, emitter));
+        // 必须在请求线程内捕获用户身份：下面提交的异步任务运行在 ForkJoinPool 中，
+        // 那里读不到 Sa-Token 的 ThreadLocal，会导致 owner_user_id 落库为 NULL、
+        // 历史会话列表因此恒为空（详见 UserIdHolder）。
+        Long currentUserId = UserIdHolder.capture();
+        CompletableFuture.runAsync(() -> {
+            UserIdHolder.set(currentUserId);
+            try {
+                chatService.streamChat(request, emitter);
+            } finally {
+                UserIdHolder.clear();
+            }
+        });
         return ResponseEntity.ok()
                 .header(HttpHeaders.CACHE_CONTROL, "no-cache")
                 .header(HttpHeaders.CONNECTION, "keep-alive")
@@ -81,6 +95,25 @@ public class ChatController {
     @DeleteMapping("/sessions/{sessionId}")
     public Result<Void> deleteSession(@PathVariable String sessionId) {
         chatService.deleteSession(sessionId);
+        return Result.success(null);
+    }
+
+    /**
+     * 提交工具审批决定。
+     *
+     * <p>为什么是独立的 HTTP 请求而不是走 SSE：SSE 是单向通道，客户端无法在
+     * 同一条连接上回话。Agent 线程此时正阻塞等待结论，本接口负责把结论送回会合点。</p>
+     *
+     * <p>「不属于当前用户」与「已过期」返回同样的结果，避免用响应差异探测
+     * 他人审批标识是否存在。</p>
+     */
+    @PostMapping("/approvals/{approvalId}")
+    public Result<Void> decideApproval(@PathVariable String approvalId,
+                                       @Valid @RequestBody ApprovalDecisionRequest request) {
+        boolean accepted = chatService.decideApproval(approvalId, Boolean.TRUE.equals(request.getApproved()));
+        if (!accepted) {
+            return Result.failure(ErrorCode.NOT_FOUND, "approval request not found or already settled");
+        }
         return Result.success(null);
     }
 }
