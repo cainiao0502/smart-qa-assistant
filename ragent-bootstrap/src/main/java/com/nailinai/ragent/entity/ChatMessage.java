@@ -18,6 +18,7 @@ public class ChatMessage {
     private String content;
     private String referencesJson;
     private String toolCallsJson;
+    private Long ownerUserId;
     private List<AgentStep> agentSteps;
     private LocalDateTime createdAt;
 }
