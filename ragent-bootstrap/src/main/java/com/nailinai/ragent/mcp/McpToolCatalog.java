@@ -61,6 +61,28 @@ public class McpToolCatalog {
                 .orElse(null);
     }
 
+    /**
+     * 仅从缓存中查找工具定义，<b>不触发服务器加载</b>。
+     *
+     * <p>工具闸门在每次调用前都要问一次「这个工具什么风险等级」，属于热路径：
+     * 不能为了判定风险就去遍历并启动一遍外部进程。实际流程里，模型能看见某个 MCP 工具，
+     * 说明工具列表已经被拉取过（planner 组装工具声明时调用过 {@link #listAllTools()}），
+     * 此时缓存必然命中；缓存缺失时返回 null，由调用方按最保守档位处理。</p>
+     */
+    public McpToolDefinition findByExposedNameCached(String exposedName) {
+        if (!StringUtils.hasText(exposedName)) {
+            return null;
+        }
+        for (CacheEntry entry : cache.values()) {
+            for (McpToolDefinition tool : entry.tools()) {
+                if (exposedName.equals(tool.exposedName())) {
+                    return tool;
+                }
+            }
+        }
+        return null;
+    }
+
     public McpCallResult callTool(McpToolDefinition definition, Map<String, Object> arguments) {
         McpProperties.ServerProperties server = mcpServerRegistry.getServer(definition.serverId());
         return mcpClient.callTool(definition.serverId(), server, definition.remoteName(), arguments);

@@ -26,6 +26,7 @@ import org.springframework.web.bind.annotation.PutMapping;
 import org.springframework.web.multipart.MultipartFile;
 
 import java.util.List;
+import java.util.UUID;
 
 @RestController
 @RequestMapping("/api/skills")
@@ -90,8 +91,8 @@ public class SkillController {
             throw new BusinessException(ErrorCode.BAD_REQUEST, "skill is not executable: " + name);
         }
         ChatRequest chatRequest = new ChatRequest();
-        chatRequest.setKbId(0L);
-        chatRequest.setSessionId("skill-debug");
+        chatRequest.setKbId(null);
+        chatRequest.setSessionId("skill-debug-" + UUID.randomUUID().toString().substring(0, 8));
         chatRequest.setQuestion(request == null || request.getQuestion() == null ? "" : request.getQuestion().trim());
 
         ToolExecutionResult result = skillToolExecutorFactory.create(skill).execute(

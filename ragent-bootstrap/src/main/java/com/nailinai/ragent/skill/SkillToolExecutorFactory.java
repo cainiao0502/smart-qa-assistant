@@ -55,6 +55,13 @@ public class SkillToolExecutorFactory {
             }
 
             @Override
+            public Map<String, Object> getParametersSchema() {
+                Map<String, Object> properties = new LinkedHashMap<>();
+                properties.put("input", Map.of("type", "string", "description", "传给该 skill 的输入文本或指令，可为空"));
+                return ToolExecutor.objectSchema(properties, List.of());
+            }
+
+            @Override
             public ToolExecutionResult execute(Map<String, Object> arguments, ToolContext context) {
                 long startTime = System.currentTimeMillis();
                 String output = chatClient.chat(buildSkillPrompt(skill, arguments, context));

@@ -4,6 +4,8 @@ import com.nailinai.ragent.framework.common.BusinessException;
 import com.nailinai.ragent.framework.common.ErrorCode;
 import com.nailinai.ragent.dto.request.SkillCreateRequest;
 import jakarta.annotation.PostConstruct;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 import org.springframework.util.StringUtils;
@@ -16,6 +18,7 @@ import java.nio.file.Path;
 import java.nio.file.StandardCopyOption;
 import java.nio.file.StandardOpenOption;
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.Comparator;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -25,6 +28,8 @@ import java.util.stream.Collectors;
 
 @Service
 public class SkillRegistry {
+
+    private static final Logger log = LoggerFactory.getLogger(SkillRegistry.class);
 
     private final Path skillRoot;
     private volatile Map<String, SkillDefinition> skills = Map.of();
@@ -41,7 +46,7 @@ public class SkillRegistry {
     public synchronized void reload() {
         Map<String, SkillDefinition> loaded = new LinkedHashMap<>();
         if (!Files.exists(skillRoot) || !Files.isDirectory(skillRoot)) {
-            skills = Map.copyOf(loaded);
+            skills = Map.of();
             return;
         }
 
@@ -54,7 +59,9 @@ public class SkillRegistry {
             throw new IllegalStateException("Failed to scan skill directory: " + skillRoot, exception);
         }
 
-        skills = Map.copyOf(loaded);
+        // 必须保留 LinkedHashMap 的插入顺序：目录按名称排序后渲染进提示词/工具描述，
+        // 顺序稳定才能让 prompt 缓存命中率稳定（Map.copyOf 会丢顺序）
+        skills = Collections.unmodifiableMap(loaded);
     }
 
     public List<SkillDefinition> listSkills() {
@@ -95,26 +102,28 @@ public class SkillRegistry {
         return result;
     }
 
-    public String renderSkillContext(List<String> skillNames) {
+    /**
+     * 渲染技能目录（仅元数据：名称 + 描述，每技能一行）。
+     *
+     * <p>这是 Agent Skills 渐进式披露的第一层：让模型知道「有哪些技能、各自干什么」，
+     * 但<b>不注入 SKILL.md 正文</b>——正文属于第二层，只应由模型通过
+     * {@code load_skill} 工具按需加载，避免每个技能的知识变成每轮 prompt 的固定开销。</p>
+     */
+    public String renderSkillCatalog(List<String> skillNames) {
         List<SkillDefinition> selected = findSkills(skillNames);
         if (selected.isEmpty()) {
             return "";
         }
         return selected.stream()
-                .map(skill -> """
-                        [Skill: %s]
-                        Title: %s
-                        Description: %s
-
-                        %s
-                        """.formatted(
+                .map(skill -> "- %s: %s".formatted(
                         skill.getName(),
-                        fallback(skill.getTitle(), skill.getName()),
-                        fallback(skill.getDescription(), "(no description)"),
-                        skill.getContent().trim()
-                ))
-                .reduce((left, right) -> left + "\n\n" + right)
-                .orElse("");
+                        fallback(skill.getDescription(), "(no description)")))
+                .collect(Collectors.joining("\n"));
+    }
+
+    /** 渲染全部技能的目录（供 {@code load_skill} 工具描述使用），无筛选。 */
+    public String renderFullSkillCatalog() {
+        return renderSkillCatalog(List.copyOf(skills.keySet()));
     }
 
     public synchronized SkillDefinition createSkill(SkillCreateRequest request) {
@@ -208,6 +217,13 @@ public class SkillRegistry {
             String rawContent = Files.readString(skillFile, StandardCharsets.UTF_8);
             ParsedSkill parsedSkill = parseSkill(rawContent);
             String name = dir.getFileName().toString();
+            // Agent Skills 标准要求 frontmatter.name 必填且等于目录名；
+            // 声明了但不一致说明目录被改名过或内容放错，按无效技能跳过而不是静默改名
+            String declaredName = trimToNull(parsedSkill.metadata().get("name"));
+            if (StringUtils.hasText(declaredName) && !declaredName.equals(name)) {
+                log.warn("Skip skill '{}': frontmatter name '{}' does not match directory name", name, declaredName);
+                return;
+            }
             loaded.put(name, SkillDefinition.builder()
                     .name(name)
                     .title(firstNonBlank(parsedSkill.metadata().get("title"), extractTitle(parsedSkill.body(), name)))

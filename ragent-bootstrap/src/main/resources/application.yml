@@ -8,6 +8,23 @@ spring:
     username: ${SPRING_DATASOURCE_USERNAME:postgres}
     password: ${SPRING_DATASOURCE_PASSWORD:postgres}
     driver-class-name: org.postgresql.Driver
+    hikari:
+      maximum-pool-size: 20
+      minimum-idle: 5
+      connection-timeout: 10000
+      idle-timeout: 300000
+      max-lifetime: 1200000
+  data:
+    redis:
+      host: ${SPRING_REDIS_HOST:127.0.0.1}
+      port: ${SPRING_REDIS_PORT:6379}
+      password: ${SPRING_REDIS_PASSWORD:}
+      database: ${SPRING_REDIS_DATABASE:0}
+      lettuce:
+        pool:
+          max-active: 8
+          max-idle: 4
+          min-idle: 0
   servlet:
     multipart:
       max-file-size: 20MB
@@ -15,6 +32,18 @@ spring:
 
 server:
   port: 8080
+
+sa-token:
+  token-name: Authorization
+  timeout: 2592000
+  active-timeout: -1
+  is-concurrent: true
+  is-share: false
+  token-style: uuid
+  is-log: false
+  is-read-header: true
+  is-read-cookie: false
+  token-prefix: Bearer
 
 ai:
   chat:
@@ -26,9 +55,15 @@ ai:
       - provider: siliconflow
         base-url: ${SILICONFLOW_BASE_URL:https://api.siliconflow.cn/v1}
         api-key: ${SILICONFLOW_API_KEY:}
-        model: Qwen/Qwen2.5-72B
+        # Qwen/Qwen2.5-72B 已于 2026-09 从 SiliconFlow 下架，默认换为在售模型，可用 env 覆盖
+        model: ${SILICONFLOW_CHAT_MODEL:deepseek-ai/DeepSeek-V4-Flash}
   embedding:
     candidates:
+      # 首选：独立 embedding 供应商（Qwen3-Embedding-0.6B，1024 维）
+      - provider: elysiver
+        base-url: ${EMBEDDING_BASE_URL:https://elysiver.h-e.top/v1}
+        api-key: ${EMBEDDING_API_KEY:}
+        model: ${EMBEDDING_MODEL:qwen3-embedding-0.6b}
       - provider: siliconflow
         base-url: ${SILICONFLOW_BASE_URL:https://api.siliconflow.cn/v1}
         api-key: ${SILICONFLOW_API_KEY:}
@@ -37,30 +72,84 @@ ai:
         base-url: ${APP_LLM_BASE_URL:https://api.minimaxi.com/v1}
         api-key: ${APP_LLM_API_KEY:}
         model: ${APP_LLM_EMBEDDING_MODEL:embo-01}
+  vision:
+    # 图片理解（可选）：开启后，图片型文档会先由视觉模型转成文本描述再入库，
+    # 从而能被检索到；未开启时图片文档会解析为空文本（启动与上传时均有日志提示）。
+    enabled: ${AI_VISION_ENABLED:false}
+    provider: ${AI_VISION_PROVIDER:siliconflow}
+    base-url: ${AI_VISION_BASE_URL:https://api.siliconflow.cn/v1}
+    api-key: ${AI_VISION_API_KEY:}
+    model: ${AI_VISION_MODEL:Qwen/Qwen2.5-VL-72B-Instruct}
   retry:
     max-attempts: 3
     backoff-ms: 800
 
 app:
+  cors:
+    # 前端来源白名单（逗号分隔，支持 * 通配）。本地开发端口会漂移
+    # （5173 被占用时 vite 自动改用 5174 等），故用通配避免浏览器被判 403。
+    # 部署后请通过 APP_CORS_ALLOWED_ORIGINS 替换为真实域名。
+    allowed-origins: "${APP_CORS_ALLOWED_ORIGINS:http://localhost:*,http://127.0.0.1:*}"
   agent:
-    max-steps: 6
+    # 6 步对「单问句」够用（实测 2 次 LLM 调用即可收尾），但三问句会在收尾前用尽；
+    # 提到 8 让多子问题有机会答全（成本影响：每步约 +1 次 LLM 调用，其中固定前缀大多命中 prompt 缓存）
+    max-steps: 8
+    # 收敛守卫（PerTaskToolBudgetHook）：同一任务的工具调用上限。
+    # 防止模型换个说法反复检索同一个子问题，把步数耗尽导致后续任务没机会执行。
+    max-tool-calls-per-task: 3
+    # 硬兜底：连续被守卫拦截这么多次后强制收尾，保证「答一部分 + 说明缺口」而非空转耗尽步数
+    max-guard-blocks: 2
+    # 授权兜底：模型反复索要同一权限时收尾，避免把用户拖进反复确认
+    max-approval-blocks: 2
+    # 工具审批（ToolApprovalGate）：对 MCP 工具中「有副作用或会外联」的调用要求人工确认。
+    # 判定依据是 MCP 协议自带的 annotations（readOnlyHint / destructiveHint / openWorldHint），
+    # 未声明时按最保守档位处理——服务端不表态不等于安全。内置工具（自研、只读）不在管辖范围。
+    tool-approval:
+      enabled: ${APP_TOOL_APPROVAL_ENABLED:true}
+      # 等待人工确认的上限；超时按未授权处理（绝不放行）
+      approval-timeout-ms: ${APP_TOOL_APPROVAL_TIMEOUT_MS:120000}
+      # 受信工具白名单（暴露名，逗号分隔）：管理员确认过、不便逐次确认的工具可列入
+      trusted-tools: ${APP_TOOL_APPROVAL_TRUSTED_TOOLS:}
+    compaction:
+      # 参考 pi harness/compaction：步骤观察总量超过阈值时，把早期步骤摘要成一条
+      # 结构化记录（最近 N 步与 plan 步骤保留原文），Planner 视图不再随步数线性膨胀。
+      enabled: true
+      trigger-chars: 6000
+      keep-recent-steps: 2
+      summary-max-tokens: 1024
+  document:
+    # 单份文档解析后的文本上限（字符）。超出部分不入库索引，避免超大文档撑爆内存与切片量。
+    max-parse-chars: ${APP_DOCUMENT_MAX_PARSE_CHARS:200000}
   storage:
     upload-dir: uploads
   rag:
     top-k: 4
     reference-distance-threshold: 0.4
     history-limit: 6
+    history-token-budget: 6000
     chunk-size: 500
     chunk-overlap: 80
     query-rewrite:
       enabled: true
+    channel:
+      keyword:
+        enabled: true   # 关置 false 即纯向量检索（消融实验用）
+      vector:
+        enabled: true   # 关置 false 即纯关键词检索（消融实验用）
     rerank:
       enabled: true
-      candidate-multiplier: 3
+      candidate-multiplier: 3   # 各检索通道按 topK×N 召回候选，再进 RRF 融合与加权打分；配 <1 时按 topK 处理
       semantic-weight: 0.75
       lexical-weight: 0.25
+  eval:
+    enabled: ${APP_EVAL_ENABLED:false}
+    semantic-enabled: ${APP_EVAL_SEMANTIC_ENABLED:false}
+    set-path: ${APP_EVAL_SET_PATH:data/eval/eval-set.json}
   mcp:
     enabled: ${APP_MCP_ENABLED:false}
     request-timeout-ms: ${APP_MCP_REQUEST_TIMEOUT_MS:30000}
     tool-cache-seconds: ${APP_MCP_TOOL_CACHE_SECONDS:300}
     custom-config-path: ${APP_MCP_CUSTOM_CONFIG_PATH:data/mcp/custom-servers.json}
+  guardrail:
+    max-question-length: 2000
+    prompt-injection-enabled: true

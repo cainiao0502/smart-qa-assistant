@@ -34,6 +34,11 @@ public class McpClient {
 
     private static final String PROTOCOL_VERSION = "2025-06-18";
 
+    /** 未知 content 结构的兜底截断长度，防止任意未知类型把模型上下文撑爆。 */
+    static final int MAX_UNKNOWN_ITEM_CHARS = 800;
+    /** 顶层兜底字段（structuredContent/data/output/result）的截断长度。 */
+    static final int MAX_FALLBACK_CHARS = 2000;
+
     private final McpProperties properties;
     private final ObjectMapper objectMapper;
     private final HttpClient httpClient;
@@ -79,10 +84,31 @@ public class McpClient {
                     exposedName,
                     remoteName,
                     toolNode.path("description").asText(""),
-                    objectMapper.convertValue(toolNode.path("inputSchema"), Map.class)
+                    objectMapper.convertValue(toolNode.path("inputSchema"), Map.class),
+                    parseAnnotations(toolNode.path("annotations"))
             ));
         }
         return definitions;
+    }
+
+    /**
+     * 解析 MCP 规范的工具风险标注。
+     *
+     * <p>规范里 {@code readOnlyHint} 缺省为 false、{@code destructiveHint} 缺省为 true，
+     * 因此这里<b>只把服务端显式声明的 true 当作 true</b>，其余一律走保守值——
+     * 一个不表态的第三方工具不应该被当成安全的。</p>
+     */
+    private ToolAnnotations parseAnnotations(JsonNode annotationsNode) {
+        if (annotationsNode == null || annotationsNode.isMissingNode() || annotationsNode.isNull()
+                || !annotationsNode.isObject()) {
+            return ToolAnnotations.UNKNOWN;
+        }
+        return new ToolAnnotations(
+                true,
+                annotationsNode.path("readOnlyHint").asBoolean(false),
+                annotationsNode.path("destructiveHint").asBoolean(true),
+                annotationsNode.path("openWorldHint").asBoolean(true)
+        );
     }
 
     public McpCallResult callTool(String serverId,
@@ -192,7 +218,8 @@ public class McpClient {
             mcpProcessManager.sendStdioNotification(serverId, server, payloadJson);
             return new JsonRpcEnvelope(objectMapper.createObjectNode(), Map.of());
         }
-        JsonNode result = mcpProcessManager.sendStdioRequest(serverId, server, String.valueOf(requestId), payloadJson);
+        JsonNode result = mcpProcessManager.sendStdioRequest(serverId, server, String.valueOf(requestId), payloadJson,
+                Math.max(1000, properties.getRequestTimeoutMs()));
         return new JsonRpcEnvelope(result, Map.of());
     }
 
@@ -464,37 +491,97 @@ public class McpClient {
         return body;
     }
 
-    private String extractSupplementalContext(JsonNode result) {
+    /**
+     * 从 tools/call 结果中提取可回灌给模型的文本。
+     *
+     * <p>MCP 规范里 {@code content} 是多类型数组（text / image / audio / resource_link / resource），
+     * 未知类型也允许出现。<b>image / audio 的 payload 是 base64</b>，直接序列化会把几十 KB 的
+     * 编码灌进模型上下文——这里一律替换成占位说明；未知结构也做长度截断兜底。</p>
+     */
+    String extractSupplementalContext(JsonNode result) {
         StringBuilder builder = new StringBuilder();
-        JsonNode contentNode = result.path("content");
-        if (contentNode.isArray()) {
-            for (JsonNode item : contentNode) {
-                String type = item.path("type").asText("");
-                if ("text".equalsIgnoreCase(type) || item.has("text")) {
-                    appendBlock(builder, item.path("text").asText(""));
-                } else if (item.has("structuredContent")) {
-                    appendBlock(builder, item.path("structuredContent").toPrettyString());
-                } else if (item.isObject() && item.size() > 0) {
-                    appendBlock(builder, item.toPrettyString());
+        collectContentItems(builder, result.path("content"));
+        if (builder.isEmpty() && result.has("structuredContent")) {
+            appendBlock(builder, truncateChars(result.path("structuredContent").toPrettyString(), MAX_FALLBACK_CHARS));
+        }
+        if (builder.isEmpty() && result.has("data")) {
+            appendBlock(builder, truncateNode(result.path("data")));
+        }
+        if (builder.isEmpty() && result.has("output")) {
+            appendBlock(builder, truncateNode(result.path("output")));
+        }
+        if (builder.isEmpty() && result.has("result")) {
+            appendBlock(builder, truncateNode(result.path("result")));
+        }
+        if (builder.isEmpty() && result.isObject()) {
+            appendBlock(builder, truncateChars(result.toPrettyString(), MAX_FALLBACK_CHARS));
+        }
+        return builder.toString().trim();
+    }
+
+    private void collectContentItems(StringBuilder builder, JsonNode contentNode) {
+        if (!contentNode.isArray()) {
+            return;
+        }
+        for (JsonNode item : contentNode) {
+            String type = item.path("type").asText("");
+            switch (type) {
+                case "text" -> appendBlock(builder, item.path("text").asText(""));
+                case "image" -> appendBlock(builder, binaryPlaceholder("图片", item));
+                case "audio" -> appendBlock(builder, binaryPlaceholder("音频", item));
+                case "resource_link" -> appendBlock(builder, resourceLinkText(item));
+                case "resource" -> appendBlock(builder, embeddedResourceText(item));
+                default -> {
+                    // 兼容不写 type 的 server：带 text 字段就按文本收，其余走截断兜底
+                    if (item.has("text") && item.path("text").isTextual()) {
+                        appendBlock(builder, item.path("text").asText(""));
+                    } else if (item.has("structuredContent")) {
+                        appendBlock(builder, truncateChars(item.path("structuredContent").toPrettyString(), MAX_UNKNOWN_ITEM_CHARS));
+                    } else if (item.isObject() && item.size() > 0) {
+                        appendBlock(builder, truncateChars(item.toPrettyString(), MAX_UNKNOWN_ITEM_CHARS));
+                    }
                 }
             }
         }
-        if (builder.isEmpty() && result.has("structuredContent")) {
-            appendBlock(builder, result.path("structuredContent").toPrettyString());
+    }
+
+    private String binaryPlaceholder(String label, JsonNode item) {
+        String base64 = item.path("data").asText("");
+        int approxBytes = base64.length() * 3 / 4;
+        return "[%s已省略] mimeType=%s, 约 %d KB — 二进制内容不进入模型上下文，请需要时通过其他工具获取"
+                .formatted(label, item.path("mimeType").asText("unknown"), Math.max(1, approxBytes / 1024));
+    }
+
+    private String resourceLinkText(JsonNode item) {
+        String uri = item.path("uri").asText("");
+        String name = item.path("name").asText("");
+        return "[资源链接] " + uri + (StringUtils.hasText(name) ? " (" + name + ")" : "");
+    }
+
+    private String embeddedResourceText(JsonNode item) {
+        JsonNode resource = item.path("resource");
+        if (resource.isMissingNode() || resource.isNull() || !resource.isObject()) {
+            return truncateChars(item.toPrettyString(), MAX_UNKNOWN_ITEM_CHARS);
         }
-        if (builder.isEmpty() && result.has("data")) {
-            appendNode(builder, result.path("data"));
+        if (resource.has("text") && resource.path("text").isTextual()) {
+            return resource.path("text").asText("");
         }
-        if (builder.isEmpty() && result.has("output")) {
-            appendNode(builder, result.path("output"));
+        if (resource.has("blob")) {
+            return binaryPlaceholder("嵌入资源", resource);
         }
-        if (builder.isEmpty() && result.has("result")) {
-            appendNode(builder, result.path("result"));
+        return truncateChars(resource.toPrettyString(), MAX_UNKNOWN_ITEM_CHARS);
+    }
+
+    private String truncateChars(String value, int maxLength) {
+        if (value == null || value.length() <= maxLength) {
+            return value == null ? "" : value;
         }
-        if (builder.isEmpty() && result.isObject()) {
-            appendBlock(builder, result.toPrettyString());
-        }
-        return builder.toString().trim();
+        return value.substring(0, maxLength) + "\n...(truncated)";
+    }
+
+    private String truncateNode(JsonNode node) {
+        String text = node == null || node.isMissingNode() || node.isNull() ? "" : node.toPrettyString();
+        return truncateChars(text, MAX_FALLBACK_CHARS);
     }
 
     private void appendBlock(StringBuilder builder, String value) {
@@ -507,17 +594,6 @@ public class McpClient {
         builder.append(value.trim());
     }
 
-    private void appendNode(StringBuilder builder, JsonNode node) {
-        if (node == null || node.isMissingNode() || node.isNull()) {
-            return;
-        }
-        if (node.isTextual()) {
-            appendBlock(builder, node.asText(""));
-            return;
-        }
-        appendBlock(builder, node.toPrettyString());
-    }
-
     private String firstLine(String text) {
         if (!StringUtils.hasText(text)) {
             return "";
@@ -526,11 +602,27 @@ public class McpClient {
         return index >= 0 ? text.substring(0, index).trim() : text.trim();
     }
 
-    private String toExposedName(McpProperties.ServerProperties server, String remoteName) {
-        if (!StringUtils.hasText(server.getToolNamePrefix())) {
-            return remoteName;
+    /**
+     * 生成暴露给模型的工具名。
+     *
+     * <p>OpenAI function calling 规范要求 function name 匹配 {@code ^[a-zA-Z0-9_-]{1,64}$}——
+     * 带 {@code .} 的名字会让严格校验的上游<b>拒收整个请求</b>（HTTP 400，且错误文案误导为
+     * "不支持工具调用"）。分隔符用 {@code -}，并对最终名字整体净化。</p>
+     */
+    String toExposedName(McpProperties.ServerProperties server, String remoteName) {
+        String exposed = StringUtils.hasText(server.getToolNamePrefix())
+                ? server.getToolNamePrefix().trim() + "-" + remoteName
+                : remoteName;
+        return sanitizeToolName(exposed);
+    }
+
+    /** 按 OpenAI function name 规范净化工具名：非法字符折叠为 {@code -}，超长截断到 64。 */
+    static String sanitizeToolName(String name) {
+        if (!StringUtils.hasText(name)) {
+            return name;
         }
-        return server.getToolNamePrefix().trim() + "." + remoteName;
+        String cleaned = name.replaceAll("[^a-zA-Z0-9_-]", "-").replaceAll("-{2,}", "-");
+        return cleaned.length() > 64 ? cleaned.substring(0, 64) : cleaned;
     }
 
     private void ensureConfigured(String serverId, McpProperties.ServerProperties server) {

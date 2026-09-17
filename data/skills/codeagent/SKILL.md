@@ -1,4 +1,5 @@
 ---
+name: codeagent
 title: Code Agent
 description: Use the codeagent skill as an executable tool to transform retrieved coding context into implementation guidance.
 toolName: codeagent_transform

@@ -26,13 +26,19 @@ import java.util.Deque;
 import java.util.Locale;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.BlockingQueue;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentMap;
+import java.util.concurrent.LinkedBlockingQueue;
+import java.util.concurrent.TimeUnit;
 
 @Service
 public class McpProcessManagerImpl implements McpProcessManager {
 
     private static final int MAX_LOG_LINES = 60;
+
+    /** stdout 读取线程结束的标记行：用独立常量做等值判断，不会与真实输出撞车。 */
+    static final String EOF_MARKER = "__MCP_STDIO_EOF__";
 
     private final ObjectMapper objectMapper;
     private final ConcurrentMap<String, ManagedProcess> processes = new ConcurrentHashMap<>();
@@ -82,39 +88,75 @@ public class McpProcessManagerImpl implements McpProcessManager {
     public JsonNode sendStdioRequest(String serverId,
                                      McpProperties.ServerProperties server,
                                      String requestId,
-                                     String payloadJson) {
+                                     String payloadJson,
+                                     long timeoutMs) {
         ManagedProcess managed = ensureStarted(serverId, server);
         if (!managed.stdioCapable()) {
             throw new BusinessException(ErrorCode.BAD_REQUEST, "MCP server is not configured as stdio: " + serverId);
         }
 
+        // 写和等响应都必须持锁：stdio 上同时只允许一个在途请求，响应才能按 id 精确配对。
+        // 锁的持有时间上限是 timeoutMs——之前这里是无超时的阻塞读，子进程一卡住，
+        // 持锁线程挂死，该 server 的后续所有调用就永远排在锁后面。
         synchronized (managed.lock) {
             try {
                 managed.writer.write(payloadJson);
                 managed.writer.write('\n');
                 managed.writer.flush();
-
-                String line;
-                while ((line = managed.reader.readLine()) != null) {
-                    if (!StringUtils.hasText(line)) {
-                        continue;
-                    }
-                    JsonNode node = objectMapper.readTree(line);
-                    JsonNode idNode = node.get("id");
-                    if (idNode != null && requestId.equals(idNode.asText())) {
-                        JsonNode errorNode = node.path("error");
-                        if (!errorNode.isMissingNode() && !errorNode.isNull()) {
-                            String errorMessage = errorNode.path("message").asText("unknown MCP error");
-                            throw new BusinessException(ErrorCode.INTERNAL_ERROR, "MCP error: " + errorMessage);
-                        }
-                        return node.path("result");
-                    }
-                }
-                managed.markExited();
-                throw new BusinessException(ErrorCode.INTERNAL_ERROR, "MCP stdio process exited before returning a response");
             } catch (IOException ex) {
                 throw new BusinessException(ErrorCode.INTERNAL_ERROR, "Failed to communicate with MCP stdio server: " + ex.getMessage());
             }
+            try {
+                return awaitStdioResponse(managed.stdoutLines, requestId, timeoutMs);
+            } catch (InterruptedException ex) {
+                Thread.currentThread().interrupt();
+                throw new BusinessException(ErrorCode.INTERNAL_ERROR, "Interrupted while waiting for MCP stdio response");
+            }
+        }
+    }
+
+    /**
+     * 从 stdout 行队列里等指定 id 的响应。
+     *
+     * <p>包私有：队列消费逻辑（id 配对、通知丢弃、超时、进程退出）不依赖真实进程，可直接单测。
+     * 超时<b>不杀进程</b>——晚到的响应会因 id 不匹配被下次读取丢弃，server 卡了一次不代表它死了。</p>
+     */
+    JsonNode awaitStdioResponse(BlockingQueue<String> lines, String requestId, long timeoutMs) throws InterruptedException {
+        long deadline = System.currentTimeMillis() + Math.max(1, timeoutMs);
+        while (true) {
+            long remaining = deadline - System.currentTimeMillis();
+            if (remaining <= 0) {
+                throw new BusinessException(ErrorCode.INTERNAL_ERROR,
+                        "MCP stdio request timed out after %dms (requestId=%s)".formatted(timeoutMs, requestId));
+            }
+            String line = lines.poll(Math.min(remaining, 250), TimeUnit.MILLISECONDS);
+            if (EOF_MARKER.equals(line)) {
+                throw new BusinessException(ErrorCode.INTERNAL_ERROR,
+                        "MCP stdio process exited before returning a response (requestId=%s)".formatted(requestId));
+            }
+            if (line == null || !StringUtils.hasText(line)) {
+                continue;
+            }
+            JsonNode node;
+            try {
+                node = objectMapper.readTree(line);
+            } catch (IOException ex) {
+                // server 把日志误写进 stdout 的非 JSON 行：跳过，不当成协议消息
+                continue;
+            }
+            if (node == null || !node.isObject()) {
+                continue;
+            }
+            JsonNode idNode = node.get("id");
+            if (idNode == null || idNode.isNull() || !requestId.equals(idNode.asText())) {
+                // server 主动通知、或已超时作废请求的迟到响应：丢弃
+                continue;
+            }
+            JsonNode errorNode = node.path("error");
+            if (!errorNode.isMissingNode() && !errorNode.isNull()) {
+                throw new BusinessException(ErrorCode.INTERNAL_ERROR, "MCP error: " + errorNode.path("message").asText("unknown MCP error"));
+            }
+            return node.path("result");
         }
     }
 
@@ -175,6 +217,7 @@ public class McpProcessManagerImpl implements McpProcessManager {
                 Process process = builder.start();
                 ManagedProcess managed = new ManagedProcess(process, server.getLaunchCommand(), server.getWorkingDirectory(), server.isStdio());
                 processes.put(serverId, managed);
+                managed.startStdoutReader(serverId);
                 managed.startStderrReader(serverId);
                 process.onExit().thenRun(managed::markExited);
                 return managed;
@@ -263,8 +306,8 @@ public class McpProcessManagerImpl implements McpProcessManager {
         private final List<String> launchCommand;
         private final String workingDirectory;
         private final boolean stdio;
-        private final BufferedReader reader;
         private final BufferedWriter writer;
+        private final BlockingQueue<String> stdoutLines = new LinkedBlockingQueue<>();
         private final Deque<String> logs = new ArrayDeque<>();
         private volatile Integer exitCode;
 
@@ -274,7 +317,6 @@ public class McpProcessManagerImpl implements McpProcessManager {
             this.launchCommand = launchCommand == null ? List.of() : List.copyOf(launchCommand);
             this.workingDirectory = workingDirectory;
             this.stdio = stdio;
-            this.reader = new BufferedReader(new InputStreamReader(process.getInputStream(), StandardCharsets.UTF_8));
             this.writer = new BufferedWriter(new OutputStreamWriter(process.getOutputStream(), StandardCharsets.UTF_8));
         }
 
@@ -284,6 +326,33 @@ public class McpProcessManagerImpl implements McpProcessManager {
 
         private boolean stdioCapable() {
             return stdio;
+        }
+
+        private void startStdoutReader(String serverId) {
+            Thread readerThread = new Thread(() -> readProtocolLines(process.getInputStream()), "mcp-stdout-" + serverId);
+            readerThread.setDaemon(true);
+            readerThread.start();
+        }
+
+        /**
+         * stdout 必须由独立线程持续读入队列：请求线程不能直接 {@code readLine()}——
+         * 那是没有超时的阻塞读，子进程卡住时持锁线程和后续所有调用一起挂死。
+         */
+        private void readProtocolLines(InputStream stream) {
+            try (BufferedReader protocolReader = new BufferedReader(new InputStreamReader(stream, StandardCharsets.UTF_8))) {
+                String line;
+                while ((line = protocolReader.readLine()) != null) {
+                    stdoutLines.put(line);
+                }
+            } catch (IOException | InterruptedException ignored) {
+                // 进程被杀 / 读中断：走 EOF 标记收尾
+            } finally {
+                try {
+                    stdoutLines.put(EOF_MARKER);
+                } catch (InterruptedException ignored) {
+                    Thread.currentThread().interrupt();
+                }
+            }
         }
 
         private void startStderrReader(String serverId) {
