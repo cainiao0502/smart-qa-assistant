@@ -1,4 +1,4 @@
-﻿<template>
+<template>
   <section class="skill-page">
     <div class="skill-shell">
       <header class="skill-toolbar">
@@ -934,12 +934,12 @@ onMounted(async () => {
 .toolbar-copy h1 {
   margin: 0 0 8px;
   font-size: 24px;
-  color: #24364d;
+  color: var(--text-primary);
 }
 
 .toolbar-copy p {
   margin: 0;
-  color: #6f8298;
+  color: var(--text-muted);
   font-size: 13px;
 }
 
@@ -979,13 +979,13 @@ onMounted(async () => {
   justify-content: space-between;
   align-items: center;
   margin-bottom: 12px;
-  color: #24364d;
+  color: var(--text-primary);
   font-size: 13px;
   font-weight: 700;
 }
 
 .skill-list-header small {
-  color: #7a8ca4;
+  color: var(--text-muted);
   font-size: 11px;
 }
 
@@ -1029,12 +1029,12 @@ onMounted(async () => {
 }
 
 .skill-item strong {
-  color: #24364d;
+  color: var(--text-primary);
   font-size: 13px;
 }
 
 .skill-item span {
-  color: #6f8298;
+  color: var(--text-muted);
   font-size: 12px;
   line-height: 1.5;
 }
@@ -1052,7 +1052,7 @@ onMounted(async () => {
 }
 
 .skill-item code {
-  color: #5d738d;
+  color: var(--text-muted);
   font-size: 11px;
   padding: 3px 6px;
   border-radius: 8px;
@@ -1064,7 +1064,7 @@ onMounted(async () => {
   display: grid;
   place-items: center;
   min-height: 180px;
-  color: #8d9daf;
+  color: var(--text-secondary);
   font-size: 13px;
   text-align: center;
 }
@@ -1084,7 +1084,6 @@ onMounted(async () => {
   padding-bottom: 12px;
   margin-bottom: 4px;
   background: linear-gradient(180deg, rgba(255, 255, 255, 0.98), rgba(255, 255, 255, 0.88));
-  backdrop-filter: blur(10px);
 }
 
 .detail-title-block {
@@ -1102,12 +1101,12 @@ onMounted(async () => {
 .skill-detail-header h2 {
   margin: 0;
   font-size: 22px;
-  color: #24364d;
+  color: var(--text-primary);
 }
 
 .skill-detail-header p {
   margin: 0;
-  color: #6f8298;
+  color: var(--text-muted);
   font-size: 13px;
   line-height: 1.6;
 }
@@ -1116,7 +1115,7 @@ onMounted(async () => {
   padding: 6px 10px;
   border-radius: 999px;
   background: rgba(236, 243, 250, 0.92);
-  color: #5d738d;
+  color: var(--text-muted);
   font-size: 11px;
 }
 
@@ -1140,12 +1139,12 @@ onMounted(async () => {
 }
 
 .meta-card span {
-  color: #7a8ca4;
+  color: var(--text-muted);
   font-size: 12px;
 }
 
 .meta-card code {
-  color: #31465f;
+  color: var(--text-primary);
   font-size: 11px;
   word-break: break-all;
 }
@@ -1176,13 +1175,13 @@ onMounted(async () => {
 }
 
 .debug-panel-header strong {
-  color: #24364d;
+  color: var(--text-primary);
   font-size: 14px;
 }
 
 .debug-panel-header p {
   margin: 6px 0 0;
-  color: #6f8298;
+  color: var(--text-muted);
   font-size: 12px;
   line-height: 1.5;
 }
@@ -1204,13 +1203,13 @@ onMounted(async () => {
 }
 
 .schema-label {
-  color: #24364d;
+  color: var(--text-primary);
   font-size: 12px;
   font-weight: 700;
 }
 
 .schema-description {
-  color: #7a8ca4;
+  color: var(--text-muted);
   font-size: 11px;
   line-height: 1.5;
 }
@@ -1223,7 +1222,7 @@ onMounted(async () => {
 
 .schema-required {
   margin-left: 4px;
-  color: #d14343;
+  color: var(--danger-color);
 }
 
 .schema-control {
@@ -1231,7 +1230,7 @@ onMounted(async () => {
 }
 
 .schema-error {
-  color: #d14343;
+  color: var(--danger-color);
   font-size: 11px;
   line-height: 1.4;
 }
@@ -1263,7 +1262,7 @@ onMounted(async () => {
 }
 
 .debug-result-label {
-  color: #7a8ca4;
+  color: var(--text-muted);
   font-size: 12px;
   font-weight: 700;
 }
@@ -1274,7 +1273,7 @@ onMounted(async () => {
   border-radius: 12px;
   background: rgba(255, 255, 255, 0.92);
   border: 1px solid rgba(209, 221, 235, 0.7);
-  color: #31465f;
+  color: var(--text-primary);
   font-size: 12px;
   line-height: 1.7;
   white-space: pre-wrap;
@@ -1293,7 +1292,7 @@ onMounted(async () => {
   border-radius: 12px;
   background: rgba(247, 250, 255, 0.96);
   border: 1px solid rgba(209, 221, 235, 0.7);
-  color: #31465f;
+  color: var(--text-primary);
   font-size: 12px;
   line-height: 1.7;
   white-space: pre-wrap;
@@ -1320,7 +1319,7 @@ onMounted(async () => {
   gap: 10px;
 }
 
-@media (max-width: 1100px) {
+@media (max-width: 900px) {
   .skill-layout {
     grid-template-columns: 1fr;
   }

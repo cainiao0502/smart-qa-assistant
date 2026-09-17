@@ -24,12 +24,25 @@ function escapeHtml(value) {
     .replaceAll("'", '&#39;')
 }
 
+// 模型输出的标题常写成 "##1.先把心态放稳"（# 后无空格），
+// 标准 Markdown 不识别，整篇会糊成一堵字墙。这里按行补齐空格做容错。
+function normalizeModelMarkdown(content) {
+  return String(content).replace(/^(#{1,6})(?=[^\s#])/gm, '$1 ')
+}
+
 export function useMarkdownRenderer() {
   const markdownRendererVersion = ref(0)
   const markdownCache = new Map()
   let markedInstance = null
   let highlightInstance = null
   let markdownInitPromise = null
+
+  // Stream rendering throttle state
+  let lastStreamRenderTime = 0
+  let lastStreamRenderedContent = ''
+  let lastStreamRenderedHtml = ''
+  const STREAM_RENDER_THROTTLE_MS = 60
+  const STREAM_RENDER_THROTTLE_THRESHOLD = 800
 
   async function initializeMarkdownRenderer() {
     if (markdownInitPromise) {
@@ -72,13 +85,14 @@ export function useMarkdownRenderer() {
     if (!content) {
       return ''
     }
-    const cacheKey = `${markdownRendererVersion.value}:${content}`
+    const normalized = normalizeModelMarkdown(content)
+    const cacheKey = `${markdownRendererVersion.value}:${normalized}`
     if (markdownCache.has(cacheKey)) {
       return markdownCache.get(cacheKey)
     }
     const html = markedInstance
-      ? markedInstance.parse(content)
-      : escapeHtml(content).replace(/\n/g, '<br>')
+      ? markedInstance.parse(normalized)
+      : escapeHtml(normalized).replace(/\n/g, '<br>')
     markdownCache.set(cacheKey, html)
     if (markdownCache.size > 80) {
       const oldestKey = markdownCache.keys().next().value
@@ -93,13 +107,42 @@ export function useMarkdownRenderer() {
 
   function renderStreamMarkdown(content) {
     if (!content) return ''
+
+    const now = performance.now()
+    const elapsed = now - lastStreamRenderTime
+    const contentGrowth = content.length - lastStreamRenderedContent.length
+
+    // Throttle: skip re-parse if rendered recently AND content growth is small
+    // This prevents O(n²) re-parsing on every frame during streaming
+    if (
+      lastStreamRenderedHtml
+      && elapsed < STREAM_RENDER_THROTTLE_MS
+      && contentGrowth < STREAM_RENDER_THROTTLE_THRESHOLD
+      && content.startsWith(lastStreamRenderedContent)
+    ) {
+      // Reuse previous HTML, only escape the new tail
+      const tail = content.slice(lastStreamRenderedContent.length)
+      const escapedTail = escapeHtml(tail).replace(/\n/g, '<br>')
+      return lastStreamRenderedHtml + escapedTail + '<span class="stream-cursor"></span>'
+    }
+
     const html = renderMarkdownWithCache(content)
+    lastStreamRenderTime = now
+    lastStreamRenderedContent = content
+    lastStreamRenderedHtml = html
     return html + '<span class="stream-cursor"></span>'
+  }
+
+  function resetStreamCache() {
+    lastStreamRenderTime = 0
+    lastStreamRenderedContent = ''
+    lastStreamRenderedHtml = ''
   }
 
   return {
     initializeMarkdownRenderer,
     renderMarkdown,
-    renderStreamMarkdown
+    renderStreamMarkdown,
+    resetStreamCache
   }
 }

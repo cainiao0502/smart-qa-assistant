@@ -12,17 +12,17 @@
   0% {
     transform: scale(var(--breathe-scale-min, 0.97));
     opacity: 0.92;
-    box-shadow: 0 0 0 0 rgba(91, 108, 255, 0.04);
+    box-shadow: 0 0 0 0 rgba(166, 61, 42, 0.04);
   }
   50% {
     transform: scale(var(--breathe-scale-max, 1.03));
     opacity: 1;
-    box-shadow: 0 0 12px 2px rgba(91, 108, 255, 0.08);
+    box-shadow: 0 0 12px 2px rgba(166, 61, 42, 0.08);
   }
   100% {
     transform: scale(var(--breathe-scale-min, 0.97));
     opacity: 0.92;
-    box-shadow: 0 0 0 0 rgba(91, 108, 255, 0.04);
+    box-shadow: 0 0 0 0 rgba(166, 61, 42, 0.04);
   }
 }
 
@@ -94,13 +94,13 @@
 /* 6. 聚焦发光脉动 - 用于输入框聚焦状态 */
 @keyframes glow-pulse {
   0% {
-    box-shadow: 0 0 0 2px rgba(91, 108, 255, 0.12), 0 0 8px 0 rgba(91, 108, 255, 0.06);
+    box-shadow: 0 0 0 2px rgba(166, 61, 42, 0.12), 0 0 8px 0 rgba(166, 61, 42, 0.06);
   }
   50% {
-    box-shadow: 0 0 0 3px rgba(91, 108, 255, 0.18), 0 0 16px 2px rgba(91, 108, 255, 0.1);
+    box-shadow: 0 0 0 3px rgba(166, 61, 42, 0.18), 0 0 16px 2px rgba(166, 61, 42, 0.1);
   }
   100% {
-    box-shadow: 0 0 0 2px rgba(91, 108, 255, 0.12), 0 0 8px 0 rgba(91, 108, 255, 0.06);
+    box-shadow: 0 0 0 2px rgba(166, 61, 42, 0.12), 0 0 8px 0 rgba(166, 61, 42, 0.06);
   }
 }
 
@@ -190,13 +190,17 @@
   inset: 0;
   z-index: 0;
   background: 
-    radial-gradient(circle at 20% 20%, rgba(123, 211, 255, 0.15), transparent 40%),
-    radial-gradient(circle at 80% 30%, rgba(91, 108, 255, 0.12), transparent 35%),
-    radial-gradient(circle at 50% 80%, rgba(163, 130, 255, 0.1), transparent 40%);
-  background-size: 400% 400%;
-  animation: liquid-flow var(--duration-liquid, 20s) ease-in-out infinite;
+    radial-gradient(circle at 18% 22%, rgba(166, 61, 42, 0.10), transparent 38%),
+    radial-gradient(circle at 82% 28%, rgba(166, 61, 42, 0.06), transparent 34%),
+    radial-gradient(circle at 50% 82%, rgba(226, 232, 240, 0.4), transparent 42%);
   pointer-events: none;
-  will-change: background-position;
+  will-change: opacity;
+  animation: bg-breathe 12s ease-in-out infinite;
+}
+
+@keyframes bg-breathe {
+  0%, 100% { opacity: 0.85; }
+  50% { opacity: 1; }
 }
 
 @media (prefers-reduced-motion: reduce) {

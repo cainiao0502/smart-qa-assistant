@@ -134,8 +134,6 @@ function updateOption(key, value) {
   background: linear-gradient(135deg, rgba(255, 255, 255, 0.92), rgba(248, 252, 255, 0.96));
   border: 1px solid rgba(210, 225, 240, 0.35);
   box-shadow: 0 4px 20px rgba(164, 182, 207, 0.08);
-  backdrop-filter: blur(12px) saturate(140%);
-  -webkit-backdrop-filter: blur(12px) saturate(140%);
 }
 
 .retrieval-grid {
@@ -155,7 +153,7 @@ function updateOption(key, value) {
 }
 
 .setting-label {
-  color: #7a8ca4;
+  color: var(--text-muted);
   font-size: 11.5px;
   font-weight: 600;
   letter-spacing: 0.02em;
@@ -198,7 +196,7 @@ function updateOption(key, value) {
 
 .skill-setting-tip {
   margin-top: 4px;
-  color: #9aa8b8;
+  color: var(--text-muted);
   font-size: 11px;
   line-height: 1.5;
 }
@@ -212,7 +210,7 @@ function updateOption(key, value) {
 }
 
 .setting-tip {
-  color: #9aa8b8;
+  color: var(--text-muted);
   font-size: 11.5px;
 }
 
@@ -235,7 +233,7 @@ function updateOption(key, value) {
 :deep(.el-select .el-input__wrapper.is-focus),
 :deep(.el-input__wrapper.is-focus) {
   background: #ffffff !important;
-  box-shadow: 0 0 0 1.5px rgba(91, 108, 255, 0.3) inset, 0 0 0 3px rgba(91, 108, 255, 0.06) !important;
+  box-shadow: 0 0 0 1.5px rgba(166, 61, 42, 0.3) inset, 0 0 0 3px rgba(166, 61, 42, 0.06) !important;
 }
 
 :deep(.el-input-number) {
@@ -262,14 +260,14 @@ function updateOption(key, value) {
 :deep(.el-slider__bar) {
   height: 4px;
   border-radius: 999px;
-  background: linear-gradient(90deg, rgba(91, 108, 255, 0.6), rgba(91, 108, 255, 0.8));
+  background: linear-gradient(90deg, rgba(166, 61, 42, 0.6), rgba(166, 61, 42, 0.8));
 }
 
 :deep(.el-slider__button) {
   width: 16px;
   height: 16px;
-  border: 2px solid rgba(91, 108, 255, 0.6);
-  box-shadow: 0 2px 6px rgba(91, 108, 255, 0.2);
+  border: 2px solid rgba(166, 61, 42, 0.6);
+  box-shadow: 0 2px 6px rgba(166, 61, 42, 0.2);
 }
 
 :deep(.el-select__placeholder),

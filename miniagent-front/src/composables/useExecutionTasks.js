@@ -98,6 +98,59 @@ function getSourceCompletedTaskKeys(source) {
   return []
 }
 
+/**
+ * 取最近一次结束步骤的参数。
+ *
+ * 流式对话时 skipped/unresolved 会随 agent_plan 事件直接挂在消息上；
+ * 但从历史记录加载的消息只有 agentSteps，因此这里补一条从 finish 步骤回读的路径，
+ * 保证「刷新页面后」的计划状态与流式时一致。
+ */
+function extractLatestTerminalArguments(source) {
+  const steps = sortAgentSteps(source?.agentSteps || source?.steps || [])
+  for (let index = steps.length - 1; index >= 0; index--) {
+    const step = steps[index]
+    if (step?.stepType === 'finish' || step?.stepType === 'respond_with_gap') {
+      return step.arguments || null
+    }
+  }
+  return null
+}
+
+/**
+ * 模型显式声明的「有意跳过」任务：key -> 原因。
+ *
+ * 跳过是正常行为（信息可能已被前面步骤的观察覆盖），因此这些任务不应被呈现为
+ * 「未完成」——那会读成欠账。这里把原因一并取出，用于展示成一句说明而非状态标签。
+ */
+function getSourceSkippedTaskKeys(source) {
+  const skipped = new Map()
+  const raw = Array.isArray(source?.skippedTaskKeys)
+    ? source.skippedTaskKeys
+    : (extractLatestTerminalArguments(source)?.skippedTaskKeys || [])
+  if (Array.isArray(raw)) {
+    raw.forEach((item) => {
+      if (!item || typeof item !== 'object') {
+        return
+      }
+      const key = typeof item.key === 'string' ? item.key : ''
+      if (!key) {
+        return
+      }
+      const reason = typeof item.reason === 'string' && item.reason ? item.reason : '未说明原因'
+      skipped.set(key, reason)
+    })
+  }
+  return skipped
+}
+
+/** 既未完成也未声明跳过的任务：唯一需要提示用户的「欠账」。 */
+function getSourceUnresolvedTaskKeys(source) {
+  const raw = Array.isArray(source?.unresolvedTaskKeys)
+    ? source.unresolvedTaskKeys
+    : (extractLatestTerminalArguments(source)?.unresolvedTaskKeys || [])
+  return Array.isArray(raw) ? raw.filter((item) => typeof item === 'string' && item) : []
+}
+
 function buildTaskToolBuckets(source, tasks, steps) {
   const toolCalls = Array.isArray(source?.toolCalls) ? [...source.toolCalls] : []
   const taskBuckets = new Map()
@@ -164,6 +217,9 @@ function formatAgentStepLabel(step) {
   }
   if (step.stepType === 'respond_with_gap') {
     return '结束并说明信息缺口'
+  }
+  if (step.stepType === 'guard') {
+    return '收敛守卫拦截了重复检索'
   }
   return step.stepType || '步骤'
 }
@@ -271,6 +327,8 @@ function buildExecutionTasks(source) {
   const explicitPlan = getSourcePlan(source)
   const currentActionKey = getSourceCurrentActionKey(source)
   const completedTaskKeys = new Set(getSourceCompletedTaskKeys(source))
+  const skippedTaskKeys = getSourceSkippedTaskKeys(source)
+  const unresolvedTaskKeys = new Set(getSourceUnresolvedTaskKeys(source))
   const executionStatus = resolveExecutionStatus(source)
   const finalContent = source?.content || source?.finalAnswer || ''
   const rawActionSteps = steps.filter((step) => step?.stepType !== 'plan')
@@ -301,7 +359,14 @@ function buildExecutionTasks(source) {
       const hasTerminalStep = taskSteps.some((step) => step?.stepType === 'finish' || step?.stepType === 'respond_with_gap')
       let inferredStatus = 'PENDING'
 
-      if (completedTaskKeys.has(task.key) || hasTerminalStep || (runFinished && finalContent && index === finalTaskIndex)) {
+      // 优先级：显式跳过 > 显式未解决 > 已完成/终端步骤 > 从步骤状态推断。
+      // 「跳过」与「未解决」必须分开：前者是模型的正当取舍，后者才是真正没交代的欠账。
+      const skipReason = skippedTaskKeys.get(task.key)
+      if (skipReason) {
+        inferredStatus = 'SKIPPED'
+      } else if (unresolvedTaskKeys.has(task.key)) {
+        inferredStatus = 'UNFINISHED'
+      } else if (completedTaskKeys.has(task.key) || hasTerminalStep || (runFinished && finalContent && index === finalTaskIndex)) {
         inferredStatus = 'SUCCESS'
       } else if (matchedStep?.status === 'FAILED') {
         inferredStatus = matchedStep.status
@@ -324,8 +389,10 @@ function buildExecutionTasks(source) {
       return {
         key: task.key || `task-${index + 1}`,
         title: task.title || `任务 ${index + 1}`,
-        subtitle: matchedStep ? formatAgentStepLabel(matchedStep) : (task.description || ''),
-        detail: matchedStep?.observationSummary || matchedStep?.reason || task.description || '',
+        subtitle: skipReason
+          ? '未单独执行'
+          : (matchedStep ? formatAgentStepLabel(matchedStep) : (task.description || '')),
+        detail: skipReason || matchedStep?.observationSummary || matchedStep?.reason || task.description || '',
         planOrigin: task.planOrigin || 'initial',
         status: inferredStatus,
         durationMs: matchedStep?.durationMs ?? null,
@@ -408,6 +475,46 @@ function buildExecutionTasks(source) {
   return result
 }
 
+function formatTokenCount(value) {
+  if (!Number.isFinite(value) || value <= 0) {
+    return '0'
+  }
+  return value >= 1000 ? `${(value / 1000).toFixed(1)}k` : String(value)
+}
+
+/**
+ * 运行成本与耗时的展示文案。
+ *
+ * <p>缓存命中率必须一起展示：循环里每次调用都要重发 system prompt + 工具 schema + 历史，
+ * 但这些重复前缀通常命中 prompt 缓存按折扣价计费——只看输入 token 会让人误以为很贵。
+ */
+function formatRunUsage(usage) {
+  if (!usage || typeof usage !== 'object') {
+    return ''
+  }
+  const parts = []
+  const loopMs = Number(usage.loopDurationMs)
+  if (Number.isFinite(loopMs) && loopMs > 0) {
+    parts.push(`耗时 ${(loopMs / 1000).toFixed(1)}s`)
+  }
+  const llmCalls = Number(usage.llmCalls)
+  if (Number.isFinite(llmCalls) && llmCalls > 0) {
+    parts.push(`${llmCalls} 次模型调用`)
+  }
+  const inputTokens = Number(usage.inputTokens)
+  if (Number.isFinite(inputTokens) && inputTokens > 0) {
+    const cachedTokens = Number(usage.cachedTokens) || 0
+    const hitRate = Math.round((cachedTokens / inputTokens) * 100)
+    parts.push(`输入 ${formatTokenCount(inputTokens)}${cachedTokens > 0 ? `（缓存命中 ${hitRate}%）` : ''}`)
+  }
+  const outputTokens = Number(usage.outputTokens)
+  if (Number.isFinite(outputTokens) && outputTokens > 0) {
+    const reasoningTokens = Number(usage.reasoningTokens) || 0
+    parts.push(`输出 ${formatTokenCount(outputTokens)}${reasoningTokens > 0 ? `（思考 ${formatTokenCount(reasoningTokens)}）` : ''}`)
+  }
+  return parts.join(' · ')
+}
+
 function getExecutionProgressMeta(source) {
   const tasks = buildExecutionTasks(source)
   if (!tasks.length) {
@@ -423,34 +530,38 @@ function getExecutionProgressMeta(source) {
   const runningCount = tasks.filter((task) => task.status === 'RUNNING').length
   const partialCount = tasks.filter((task) => task.status === 'PARTIAL').length
   const unfinishedCount = tasks.filter((task) => task.status === 'UNFINISHED').length
+  const skippedCount = tasks.filter((task) => task.status === 'SKIPPED').length
   const failedCount = tasks.filter((task) => task.status === 'FAILED').length
-  const ratio = Math.round((successCount / tasks.length) * 100)
+  // 计划里声明跳过的任务不计入分母：它们不是欠账，而是「无需单独执行」。
+  const effectiveTotal = Math.max(tasks.length - skippedCount, 1)
+  const ratio = Math.round((successCount / effectiveTotal) * 100)
+  const skippedNote = skippedCount ? `，${skippedCount} 项未单独执行` : ''
 
-  let headline = `已完成 ${successCount} / ${tasks.length}`
-  let subline = '正在按计划推进'
+  let headline = `已完成 ${successCount} / ${effectiveTotal}`
+  let subline = skippedCount ? '按计划推进，部分任务无需单独执行' : '正在按计划推进'
   if (failedCount) {
     headline = `${failedCount} 个任务失败`
     subline = successCount
       ? `已完成 ${successCount} 个任务，仍有失败步骤需要处理`
       : '执行中出现失败步骤'
   } else if (runningCount) {
-    headline = `进行中 · ${successCount} / ${tasks.length}`
+    headline = `进行中 · ${successCount} / ${effectiveTotal}`
     subline = partialCount
       ? `还有 ${partialCount} 个任务已执行但未完全收尾`
       : '当前任务正在执行'
   } else if (unfinishedCount) {
-    headline = `已完成 ${successCount} / ${tasks.length}`
-    subline = `还有 ${unfinishedCount} 个任务未完成`
+    headline = `已完成 ${successCount} / ${effectiveTotal}`
+    subline = `还有 ${unfinishedCount} 个任务未解决${skippedNote}`
   } else if (partialCount) {
-    headline = `已完成 ${successCount} / ${tasks.length}`
+    headline = `已完成 ${successCount} / ${effectiveTotal}`
     subline = `${partialCount} 个任务已执行但还没有完整收尾`
-  } else if (successCount === tasks.length) {
-    headline = `全部完成 · ${tasks.length} / ${tasks.length}`
-    subline = '整条执行链路已经闭环'
+  } else if (successCount === effectiveTotal) {
+    headline = `全部完成 · ${successCount} / ${effectiveTotal}`
+    subline = skippedCount ? `${skippedCount} 项未单独执行（信息已由其他步骤覆盖）` : '整条执行链路已经闭环'
   }
 
   return {
-    summary: `${successCount} / ${tasks.length} 已完成`,
+    summary: `${successCount} / ${effectiveTotal} 已完成`,
     headline,
     subline,
     ratio
@@ -490,7 +601,8 @@ function getToolStatusClass(status) {
     RUNNING: 'warning',
     FAILED: 'danger',
     PARTIAL: 'warning',
-    UNFINISHED: 'info',
+    SKIPPED: 'info',
+    UNFINISHED: 'warning',
     PENDING: 'info'
   }[status] || 'info'
 }
@@ -501,7 +613,8 @@ function formatToolStatus(status) {
     RUNNING: '执行中',
     FAILED: '失败',
     PARTIAL: '已执行未收尾',
-    UNFINISHED: '未完成',
+    SKIPPED: '已跳过',
+    UNFINISHED: '未解决',
     PENDING: '待执行'
   }[status] || (status || '未知')
 }
@@ -581,6 +694,7 @@ export function useExecutionTasks() {
   return {
     buildExecutionTasks,
     getExecutionProgressMeta,
+    formatRunUsage,
     getCurrentExecutionTask,
     isCurrentExecutionTask,
     getExecutionOrphanTools,

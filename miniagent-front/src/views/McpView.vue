@@ -396,32 +396,32 @@ const statsCards = computed(() => [
     value: overview.value.serverCount || 0,
     description: '当前后端识别到的 MCP 服务数',
     icon: Connection,
-    color: '#4456f6',
-    bgColor: 'rgba(91, 108, 255, 0.12)'
+    color: '#8c3322',
+    bgColor: 'rgba(166, 61, 42, 0.12)'
   },
   {
     label: '已启用',
     value: overview.value.enabledServerCount || 0,
     description: '当前处于启用状态的服务配置',
     icon: SetUp,
-    color: '#119b7f',
-    bgColor: 'rgba(30, 200, 165, 0.12)'
+    color: '#8c3322',
+    bgColor: 'rgba(5, 150, 105, 0.12)'
   },
   {
     label: '可连接',
     value: overview.value.availableServerCount || 0,
     description: '成功返回工具元数据的服务',
     icon: Lightning,
-    color: '#d68a10',
-    bgColor: 'rgba(255, 182, 72, 0.16)'
+    color: 'var(--warning-color)',
+    bgColor: 'rgba(162, 115, 44, 0.16)'
   },
   {
     label: '暴露工具数',
     value: overview.value.totalToolCount || 0,
     description: '当前智能体可见的 MCP 工具数',
     icon: Promotion,
-    color: '#4d8dff',
-    bgColor: 'rgba(77, 141, 255, 0.14)'
+    color: '#0f6aa8',
+    bgColor: 'rgba(59, 130, 246, 0.14)'
   }
 ])
 
@@ -659,12 +659,10 @@ onMounted(() => {
   padding: 22px 24px;
   border-radius: 24px;
   background:
-    linear-gradient(180deg, rgba(255, 255, 255, 0.96), rgba(243, 248, 255, 0.96)),
-    radial-gradient(circle at top left, rgba(123, 211, 255, 0.16), transparent 34%);
-  border: 1px solid rgba(194, 211, 229, 0.44);
-  box-shadow:
-    inset 0 1px 0 rgba(255, 255, 255, 0.86),
-    0 16px 34px rgba(163, 183, 209, 0.14);
+    linear-gradient(180deg, rgba(255, 255, 255, 0.96), rgba(248, 250, 252, 0.96)),
+    radial-gradient(circle at top left, rgba(166, 61, 42, 0.12), transparent 34%);
+  border: 1px solid var(--border-light);
+  box-shadow: var(--shadow-xs);
 }
 
 .mcp-hero-copy {
@@ -750,9 +748,7 @@ onMounted(() => {
   background:
     linear-gradient(180deg, rgba(255, 255, 255, 0.92), rgba(244, 249, 254, 0.96));
   border: 1px solid rgba(194, 211, 229, 0.4);
-  box-shadow:
-    inset 0 1px 0 rgba(255, 255, 255, 0.82),
-    0 14px 30px rgba(165, 185, 210, 0.12);
+  box-shadow: var(--shadow-xs);
 }
 
 .mcp-board-header {
@@ -791,15 +787,15 @@ onMounted(() => {
 
 .global-banner.warning,
 .server-warning {
-  background: rgba(255, 182, 72, 0.14);
-  border: 1px solid rgba(255, 182, 72, 0.26);
-  color: #a66b0d;
+  background: rgba(162, 115, 44, 0.12);
+  border: 1px solid rgba(162, 115, 44, 0.28);
+  color: var(--warning-color);
 }
 
 .server-warning.neutral {
-  background: rgba(77, 141, 255, 0.1);
-  border-color: rgba(77, 141, 255, 0.2);
-  color: #4a6f98;
+  background: rgba(166, 61, 42, 0.1);
+  border-color: rgba(166, 61, 42, 0.2);
+  color: var(--primary-strong);
 }
 
 .server-list {
@@ -817,9 +813,7 @@ onMounted(() => {
   background:
     linear-gradient(180deg, rgba(255, 255, 255, 0.98), rgba(246, 250, 255, 0.96));
   border: 1px solid rgba(198, 214, 231, 0.58);
-  box-shadow:
-    inset 0 1px 0 rgba(255, 255, 255, 0.84),
-    0 12px 24px rgba(168, 188, 212, 0.1);
+  box-shadow: var(--shadow-xs);
 }
 
 .server-card-top,
@@ -925,7 +919,7 @@ onMounted(() => {
   display: block;
   color: var(--text-muted);
   font-size: 11px;
-  font-weight: 800;
+  font-weight: 600;
   letter-spacing: 0.08em;
   text-transform: uppercase;
 }
@@ -983,8 +977,8 @@ onMounted(() => {
 .tag-chip {
   padding: 6px 10px;
   border-radius: 999px;
-  background: rgba(228, 240, 255, 0.96);
-  color: #5f7ea2;
+  background: rgba(166, 61, 42, 0.1);
+  color: var(--primary-strong);
   font-size: 11px;
   font-weight: 700;
 }
@@ -1009,7 +1003,7 @@ onMounted(() => {
 .tool-title {
   color: var(--text-primary);
   font-size: 14px;
-  font-weight: 800;
+  font-weight: 600;
 }
 
 .tool-remote {
@@ -1056,7 +1050,7 @@ onMounted(() => {
   background: linear-gradient(135deg, rgba(223, 238, 255, 0.98), rgba(236, 245, 255, 0.98));
   color: var(--primary-strong);
   font-size: 22px;
-  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.68);
+  box-shadow: var(--shadow-xs);
 }
 
 .mcp-empty h3 {
@@ -1079,17 +1073,17 @@ onMounted(() => {
   padding: 8px 12px;
   border-radius: 999px;
   font-size: 12px;
-  font-weight: 800;
+  font-weight: 600;
 }
 
 .source-pill.custom {
-  background: rgba(77, 141, 255, 0.16);
-  color: #3f7de0;
+  background: rgba(166, 61, 42, 0.14);
+  color: var(--primary-strong);
 }
 
 .source-pill.builtin {
   background: rgba(141, 157, 175, 0.16);
-  color: #6f8094;
+  color: var(--text-muted);
 }
 
 .status-pill i {
@@ -1100,48 +1094,48 @@ onMounted(() => {
 }
 
 .status-pill.success {
-  background: rgba(30, 200, 165, 0.16);
-  color: #119b7f;
+  background: var(--success-soft);
+  color: var(--success-color);
 }
 
 .status-pill.success i {
-  background: #119b7f;
+  background: var(--success-soft);
 }
 
 .status-pill.warning {
   background: rgba(255, 182, 72, 0.2);
-  color: #d68a10;
+  color: var(--warning-color);
 }
 
 .status-pill.warning i {
-  background: #d68a10;
+  background: rgba(162, 115, 44, 0.12);
 }
 
 .status-pill.info {
-  background: rgba(77, 141, 255, 0.18);
-  color: #4d8dff;
+  background: rgba(166, 61, 42, 0.18);
+  color: var(--primary-strong);
 }
 
 .status-pill.info i {
-  background: #4d8dff;
+  background: var(--primary-color);
 }
 
 .status-pill.danger {
   background: rgba(244, 95, 122, 0.16);
-  color: #f45f7a;
+  color: var(--danger-color);
 }
 
 .status-pill.danger i {
-  background: #f45f7a;
+  background: var(--danger-soft);
 }
 
 .status-pill.muted {
   background: rgba(141, 157, 175, 0.16);
-  color: #6f8094;
+  color: var(--text-muted);
 }
 
 .status-pill.muted i {
-  background: #6f8094;
+  background: var(--bg-surface-dark);
 }
 
 .create-form {
@@ -1168,7 +1162,7 @@ onMounted(() => {
   gap: 8px;
 }
 
-@media (max-width: 1100px) {
+@media (max-width: 900px) {
   .mcp-shell {
     padding: 14px;
   }

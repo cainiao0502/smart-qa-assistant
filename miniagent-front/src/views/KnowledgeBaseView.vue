@@ -1,4 +1,4 @@
-﻿<template>
+<template>
   <section class="kb-page">
     <div class="kb-shell glass-panel">
       <header class="kb-hero">
@@ -189,24 +189,24 @@ const statsCards = computed(() => [
     value: knowledgeBases.value.length,
     description: '按主题组织你的业务内容',
     icon: Folder,
-    color: '#4456f6',
-    bgColor: 'rgba(91, 108, 255, 0.12)'
+    color: '#8c3322',
+    bgColor: 'rgba(166, 61, 42, 0.12)'
   },
   {
     label: '文档总量',
     value: totalDocuments.value,
     description: '已上传并可持续扩充的资料',
     icon: Document,
-    color: '#119b7f',
-    bgColor: 'rgba(30, 200, 165, 0.12)'
+    color: '#8c3322',
+    bgColor: 'rgba(5, 150, 105, 0.12)'
   },
   {
     label: '已生成切片',
     value: totalChunks.value,
     description: 'RAG 检索所依赖的语义颗粒度',
     icon: ChatLineSquare,
-    color: '#d68a10',
-    bgColor: 'rgba(255, 182, 72, 0.15)'
+    color: '#0f6aa8',
+    bgColor: 'rgba(59, 130, 246, 0.12)'
   }
 ])
 
@@ -313,7 +313,7 @@ onMounted(() => {
   flex-direction: column;
   gap: 14px;
   background:
-    linear-gradient(180deg, rgba(255, 255, 255, 0.88), rgba(246, 250, 255, 0.9));
+    linear-gradient(180deg, rgba(255, 255, 255, 0.88), rgba(248, 250, 252, 0.9));
 }
 
 .kb-hero {
@@ -324,12 +324,10 @@ onMounted(() => {
   padding: 22px 24px;
   border-radius: 24px;
   background:
-    linear-gradient(180deg, rgba(255, 255, 255, 0.96), rgba(243, 248, 255, 0.96)),
-    radial-gradient(circle at top left, rgba(123, 211, 255, 0.16), transparent 34%);
-  border: 1px solid rgba(194, 211, 229, 0.44);
-  box-shadow:
-    inset 0 1px 0 rgba(255, 255, 255, 0.86),
-    0 16px 34px rgba(163, 183, 209, 0.14);
+    linear-gradient(180deg, rgba(255, 255, 255, 0.96), rgba(248, 250, 252, 0.96)),
+    radial-gradient(circle at top left, rgba(166, 61, 42, 0.12), transparent 34%);
+  border: 1px solid var(--border-light);
+  box-shadow: var(--shadow-xs);
 }
 
 .kb-hero-copy {
@@ -355,7 +353,7 @@ onMounted(() => {
 
 .kb-stats {
   display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
+  grid-template-columns: 2fr 1fr 1fr;
   gap: 12px;
 }
 
@@ -364,8 +362,8 @@ onMounted(() => {
   gap: 12px;
   padding: 16px;
   border-radius: 20px;
-  background: linear-gradient(180deg, rgba(255, 255, 255, 0.94), rgba(247, 250, 254, 0.96));
-  border: 1px solid rgba(198, 214, 231, 0.52);
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.94), rgba(248, 250, 252, 0.96));
+  border: 1px solid var(--border-light);
   box-shadow: var(--shadow-xs);
   transition:
     transform var(--transition-fast),
@@ -375,7 +373,7 @@ onMounted(() => {
 
 .stat-card:hover {
   transform: translateY(-2px);
-  border-color: rgba(91, 108, 255, 0.2);
+  border-color: rgba(166, 61, 42, 0.2);
   box-shadow: var(--shadow-sm);
 }
 
@@ -418,11 +416,9 @@ onMounted(() => {
   padding: 18px;
   overflow: auto;
   background:
-    linear-gradient(180deg, rgba(255, 255, 255, 0.92), rgba(244, 249, 254, 0.96));
-  border: 1px solid rgba(194, 211, 229, 0.4);
-  box-shadow:
-    inset 0 1px 0 rgba(255, 255, 255, 0.82),
-    0 14px 30px rgba(165, 185, 210, 0.12);
+    linear-gradient(180deg, rgba(255, 255, 255, 0.92), rgba(248, 250, 252, 0.96));
+  border: 1px solid var(--border-light);
+  box-shadow: var(--shadow-xs);
 }
 
 .kb-board-header {
@@ -458,12 +454,10 @@ onMounted(() => {
   padding: 18px;
   border-radius: 20px;
   background:
-    linear-gradient(180deg, rgba(255, 255, 255, 0.98), rgba(246, 250, 255, 0.96));
-  border: 1px solid rgba(198, 214, 231, 0.58);
+    linear-gradient(180deg, rgba(255, 255, 255, 0.98), rgba(248, 250, 252, 0.96));
+  border: 1px solid var(--border-light);
   cursor: pointer;
-  box-shadow:
-    inset 0 1px 0 rgba(255, 255, 255, 0.84),
-    0 12px 24px rgba(168, 188, 212, 0.1);
+  box-shadow: var(--shadow-xs);
   transition:
     transform var(--transition-fast),
     box-shadow var(--transition-fast),
@@ -472,10 +466,8 @@ onMounted(() => {
 
 .kb-card:hover {
   transform: translateY(-4px);
-  border-color: rgba(91, 108, 255, 0.28);
-  box-shadow:
-    0 20px 36px rgba(156, 178, 204, 0.18),
-    0 0 0 1px rgba(91, 108, 255, 0.08);
+  border-color: rgba(166, 61, 42, 0.28);
+  box-shadow: var(--shadow-xs);
 }
 
 .kb-card-header,
@@ -492,16 +484,16 @@ onMounted(() => {
   border-radius: 14px;
   display: grid;
   place-items: center;
-  background: linear-gradient(135deg, rgba(223, 238, 255, 0.98), rgba(236, 245, 255, 0.98));
+  background: linear-gradient(135deg, rgba(166, 61, 42, 0.14), rgba(166, 61, 42, 0.06));
   color: var(--primary-strong);
   font-size: 18px;
-  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.68);
+  box-shadow: var(--shadow-xs);
 }
 
 .more-btn {
   width: 32px;
   height: 32px;
-  border: 1px solid rgba(203, 217, 234, 0.64);
+  border: 1px solid var(--border-light);
   border-radius: 10px;
   background: rgba(255, 255, 255, 0.94);
   color: var(--text-secondary);
@@ -516,8 +508,8 @@ onMounted(() => {
 
 .more-btn:hover {
   background: #ffffff;
-  color: var(--text-primary);
-  border-color: rgba(91, 108, 255, 0.24);
+  color: var(--primary-strong);
+  border-color: rgba(166, 61, 42, 0.24);
 }
 
 .kb-card-body {
@@ -549,10 +541,10 @@ onMounted(() => {
   align-items: center;
   padding: 3px 9px;
   border-radius: 999px;
-  background: rgba(245, 158, 11, 0.14);
+  background: rgba(162, 115, 44, 0.14);
   color: #c07a12;
-  font-size: 10px;
-  font-weight: 800;
+  font-size: 11px;
+  font-weight: 600;
 }
 
 .kb-warning-text {
@@ -572,8 +564,8 @@ onMounted(() => {
   flex: 1;
   padding: 10px 12px;
   border-radius: 14px;
-  background: linear-gradient(180deg, rgba(236, 243, 255, 0.96), rgba(245, 249, 255, 0.98));
-  border: 1px solid rgba(201, 217, 235, 0.52);
+  background: linear-gradient(180deg, rgba(248, 250, 252, 0.96), rgba(252, 254, 252, 0.98));
+  border: 1px solid var(--border-light);
   display: flex;
   flex-direction: column;
   gap: 6px;
@@ -594,7 +586,7 @@ onMounted(() => {
   color: var(--text-muted);
   font-size: 12px;
   padding-top: 2px;
-  border-top: 1px solid rgba(227, 236, 246, 0.9);
+  border-top: 1px solid var(--border-light);
 }
 
 .kb-card-link {
@@ -602,7 +594,7 @@ onMounted(() => {
   align-items: center;
   gap: 6px;
   color: var(--primary-strong);
-  font-weight: 800;
+  font-weight: 600;
 }
 
 .kb-empty {
@@ -643,7 +635,7 @@ onMounted(() => {
   font-weight: 700;
 }
 
-@media (max-width: 1100px) {
+@media (max-width: 900px) {
   .kb-shell,
   .kb-board {
     padding: 14px;

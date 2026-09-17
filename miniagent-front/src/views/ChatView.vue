@@ -1,9 +1,9 @@
-﻿<template>
+<template>
   <section class="chat-page">
     <div class="chat-shell glass-panel">
       <header class="chat-toolbar">
         <div class="toolbar-left">
-          <span class="soft-chip">
+          <span class="toolbar-title">
             <span class="chip-dot"></span>
             智能问答
           </span>
@@ -54,7 +54,7 @@
           </el-button>
 
           <el-button plain class="ghost-btn" @click="resetConversation">
-            <el-icon><Delete /></el-icon>
+            <el-icon><Plus /></el-icon>
             新对话
           </el-button>
         </div>
@@ -78,14 +78,7 @@
       <main ref="messagesContainer" class="chat-main">
         <section v-if="!messages.length && !isLoading" class="chat-empty">
           <div class="empty-icon-wrap">
-            <div class="empty-icon animate-float">
-              <svg width="42" height="42" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
-                <path d="M12 2L2 7L12 12L22 7L12 2Z" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
-                <path d="M2 17L12 22L22 17" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
-                <path d="M2 12L12 17L22 12" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
-              </svg>
-            </div>
-            <div class="empty-glow"></div>
+            <div class="empty-icon">问</div>
           </div>
 
           <h2>今天我能帮你完成什么？</h2>
@@ -108,6 +101,25 @@
           <template v-for="(message, index) in messages" :key="`${message?.role || 'unknown'}-${index}-${message?.createdAt || ''}`">
             <article
               v-if="shouldRenderMessage(message)"
+              v-memo="[
+                message.content,
+                message.role,
+                message._isNew,
+                message.answerMode,
+                message.clarification,
+                message.runStatus,
+                message.currentActionKey,
+                message.completedTaskKeys?.length,
+                message.toolCalls?.length,
+                message.references?.length,
+                message.agentSteps?.length,
+                message.agentPlan?.length,
+                isStreamingMessage(message),
+                thinkingContent,
+                thinkingTransition.phase.value,
+                thinkingTransition.isTransitioning.value,
+                index
+              ]"
               class="message-row"
               :class="[message.role, { 'msg-enter': message._isNew }]"
             >
@@ -138,7 +150,7 @@
                   <span>深度思考中<span v-if="thinkingTransition.showEllipsis.value" class="thinking-ellipsis"></span></span>
                 </div>
 
-                <div v-if="message.content" class="message-bubble" :class="{ 'is-streaming': isStreamingMessage(message), 'fade-in': thinkingTransition.phase.value === 'answering' && isStreamingMessage(message) }">
+                <div v-if="message.content" class="message-bubble" :class="{ 'is-streaming': isStreamingMessage(message), 'fade-in': thinkingTransition.phase.value === 'answering' && isStreamingMessage(message), 'is-clarify': message.answerMode === 'clarify' }">
                   <div
                     v-if="isStreamingMessage(message)"
                     class="message-stream-md"
@@ -185,6 +197,51 @@
                       </button>
                     </div>
                   </div>
+                  <div
+                    v-if="message.approval"
+                    class="approval-card"
+                    :class="`approval-${String(message.approval.status || '').toLowerCase()}`"
+                  >
+                    <div class="approval-card-head">
+                      <span class="approval-badge">需要授权</span>
+                      <strong>{{ message.approval.displayName }}</strong>
+                      <small v-if="message.approval.source">{{ message.approval.source }}</small>
+                    </div>
+                    <p v-if="message.approval.riskSummary" class="approval-risk">
+                      {{ message.approval.riskSummary }}
+                    </p>
+                    <div v-if="hasApprovalArgs(message.approval.arguments)" class="approval-args">
+                      <span class="approval-args-label">调用参数</span>
+                      <pre>{{ formatApprovalArgs(message.approval.arguments) }}</pre>
+                    </div>
+                    <div class="approval-card-foot">
+                      <template v-if="message.approval.status === 'PENDING' || message.approval.status === 'FAILED'">
+                        <small class="approval-hint">
+                          <template v-if="message.approval.status === 'FAILED'">
+                            {{ message.approval.errorMessage || '提交失败，可重新点击' }}
+                          </template>
+                          <template v-else-if="message.approval.timeoutSeconds">
+                            超过 {{ message.approval.timeoutSeconds }} 秒未确认，将按未授权处理
+                          </template>
+                        </small>
+                        <div class="approval-actions">
+                          <button
+                            type="button"
+                            class="approval-btn approval-btn-reject"
+                            :disabled="message.approval.status === 'SUBMITTING'"
+                            @click="submitApproval(message, false)"
+                          >拒绝执行</button>
+                          <button
+                            type="button"
+                            class="approval-btn approval-btn-approve"
+                            :disabled="message.approval.status === 'SUBMITTING'"
+                            @click="submitApproval(message, true)"
+                          >允许执行</button>
+                        </div>
+                      </template>
+                      <small v-else class="approval-result">{{ approvalStatusText(message.approval.status) }}</small>
+                    </div>
+                  </div>
                   <div v-if="isExecutionPanelExpanded(message)" class="agent-step-panel">
                     <div class="agent-step-header">
                       <div class="agent-step-header-left">
@@ -200,6 +257,9 @@
                       <div class="execution-progress-bar">
                         <span class="execution-progress-bar-fill" :style="{ width: `${getExecutionProgressMeta(message).ratio}%` }"></span>
                       </div>
+                    </div>
+                    <div v-if="formatRunUsage(message.usage)" class="execution-usage-line">
+                      <small>{{ formatRunUsage(message.usage) }}</small>
                     </div>
                     <div class="execution-current-task" v-if="getCurrentExecutionTask(message)">
                       <span class="execution-current-label">当前步骤</span>
@@ -331,32 +391,6 @@
                         </div>
                       </div>
                     </div>
-                    <div v-if="false && hasAgentSteps(message)" class="agent-step-list raw-step-list">
-                      <div
-                        v-for="(step, stepIndex) in message.agentSteps"
-                        :key="`${step.stepIndex || stepIndex}-${step.stepType || 'step'}`"
-                        class="agent-step-item"
-                      >
-                        <div class="agent-step-top">
-                          <div class="agent-step-title-block">
-                            <strong>步骤 {{ step.stepIndex || (stepIndex + 1) }}</strong>
-                            <span class="agent-step-subtitle">
-                              {{ formatAgentStepLabel(step) }}
-                            </span>
-                          </div>
-                          <div class="agent-step-badges">
-                            <span class="tool-badge" :class="getToolStatusClass(step.status)">
-                              {{ formatToolStatus(step.status) }}
-                            </span>
-                            <span v-if="step.durationMs !== undefined && step.durationMs !== null" class="tool-badge">
-                              {{ step.durationMs }}ms
-                            </span>
-                          </div>
-                        </div>
-                        <span v-if="step.reason" class="agent-step-reason">{{ step.reason }}</span>
-                        <span v-if="step.observationSummary" class="agent-step-summary">{{ step.observationSummary }}</span>
-                      </div>
-                    </div>
                   </div>
                 </div>
 
@@ -388,33 +422,7 @@
                   </div>
                 </div>
 
-                <div
-                  v-if="message.role === 'assistant' && hasReferenceSource(message)"
-                  class="reference-panel"
-                >
-                  <div class="reference-header">
-                    <span>参考来源</span>
-                    <small>{{ message.references.length }} 条命中片段</small>
-                  </div>
-                  <div class="reference-list">
-                    <div v-for="(reference, refIndex) in message.references" :key="refIndex" class="reference-item">
-                      <div class="reference-top">
-                        <strong>{{ reference.documentName || `文档 #${reference.docId}` }}</strong>
-                        <div class="reference-badges">
-                          <span v-if="reference.fileType" class="reference-badge">{{ reference.fileType.toUpperCase() }}</span>
-                          <span v-if="reference.score !== undefined && reference.score !== null" class="reference-badge score">
-                            Score {{ formatScore(reference.score) }}
-                          </span>
-                          <span v-if="reference.rerankScore !== undefined && reference.rerankScore !== null" class="reference-badge rerank">
-                            Rerank {{ formatScore(reference.rerankScore) }}
-                          </span>
-                        </div>
-                      </div>
-                      <span v-if="reference.hitReason" class="reference-reason">{{ reference.hitReason }}</span>
-                      <span class="reference-text">{{ reference.chunkText }}</span>
-                    </div>
-                  </div>
-                </div>
+                <ReferencePanel :message="message" />
 
                 <div v-if="message.role === 'assistant' && message.content" class="message-actions">
                   <button
@@ -429,12 +437,6 @@
                   <button type="button" class="action-btn" @click="copyMessage(message.content)">
                     <el-icon><CopyDocument /></el-icon>
                     复制
-                  </button>
-                  <button type="button" class="action-btn" @click="rateMessage(index, 'like')" :class="{ active: message.liked }">
-                    <el-icon><Select /></el-icon>
-                  </button>
-                  <button type="button" class="action-btn" @click="rateMessage(index, 'dislike')" :class="{ active: message.disliked }">
-                    <el-icon><CloseBold /></el-icon>
                   </button>
                 </div>
               </div>
@@ -519,6 +521,7 @@ import { chatApi, docApi, kbApi, skillApi } from '@/api'
 import RunDetailDialog from '@/components/RunDetailDialog.vue'
 import RetrievalSettings from '@/components/RetrievalSettings.vue'
 import ChatInput from '@/components/ChatInput.vue'
+import ReferencePanel from '@/components/ReferencePanel.vue'
 import { useExecutionTasks } from '@/composables/useExecutionTasks'
 import { useMarkdownRenderer } from '@/composables/useMarkdownRenderer'
 import { useStreamingEngine } from '@/composables/useStreamingEngine'
@@ -527,11 +530,9 @@ import { useSmoothScroller } from '@/composables/useSmoothScroller'
 import { useThinkingTransition } from '@/composables/useThinkingTransition'
 import { removeRecentSession, upsertRecentSession } from '@/utils/chatSessions'
 import {
-  CloseBold,
   CopyDocument,
-  Delete,
   Operation,
-  Select,
+  Plus,
   User
 } from '@element-plus/icons-vue'
 
@@ -570,6 +571,7 @@ const runDetail = ref(null)
 const {
   buildExecutionTasks,
   getExecutionProgressMeta,
+  formatRunUsage,
   getCurrentExecutionTask,
   isCurrentExecutionTask,
   getExecutionOrphanTools,
@@ -627,7 +629,8 @@ const streamingMessageHasContent = computed(() => Boolean(streamingMessage.value
 const {
   initializeMarkdownRenderer,
   renderMarkdown,
-  renderStreamMarkdown
+  renderStreamMarkdown,
+  resetStreamCache
 } = useMarkdownRenderer()
 
 // Streaming engine composables
@@ -645,10 +648,6 @@ let scrollStateFrame = 0
 
 function generateSessionId() {
   return `sess_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`
-}
-
-function formatScore(score) {
-  return Number(score).toFixed(3)
 }
 
 function normalizeReferences(message) {
@@ -726,9 +725,7 @@ function normalizeMessage(message) {
     currentActionKey: message.currentActionKey || '',
     completedTaskKeys,
     agentSteps,
-    runStatus: message.runStatus || '',
-    liked: false,
-    disliked: false
+    runStatus: message.runStatus || ''
   }
 }
 
@@ -780,6 +777,53 @@ function applyRunStatus(message, payload) {
   }
 }
 
+const APPROVAL_STATUS_TEXT = {
+  PENDING: '等待你确认',
+  SUBMITTING: '正在提交…',
+  APPROVED: '已允许执行',
+  REJECTED: '已拒绝执行',
+  FAILED: '提交失败，可重新点击'
+}
+
+function approvalStatusText(status) {
+  return APPROVAL_STATUS_TEXT[status] || ''
+}
+
+function hasApprovalArgs(args) {
+  return Boolean(args) && typeof args === 'object' && Object.keys(args).length > 0
+}
+
+function formatApprovalArgs(args) {
+  try {
+    return JSON.stringify(args || {}, null, 2)
+  } catch (error) {
+    return String(args || '')
+  }
+}
+
+/**
+ * 提交一次工具审批决定。
+ *
+ * 失败时不把状态留在 SUBMITTING，否则按钮会永久失效；回到 PENDING 让用户可以重试。
+ */
+async function submitApproval(message, approved) {
+  const approval = message?.approval
+  if (!approval || !approval.approvalId || approval.status === 'SUBMITTING') {
+    return
+  }
+  if (approval.status !== 'PENDING' && approval.status !== 'FAILED') {
+    return
+  }
+  approval.status = 'SUBMITTING'
+  try {
+    await chatApi.decideApproval(approval.approvalId, approved)
+    approval.status = approved ? 'APPROVED' : 'REJECTED'
+  } catch (error) {
+    approval.status = 'FAILED'
+    approval.errorMessage = error?.message || '提交失败，请重试'
+  }
+}
+
 function applyAgentPlan(message, payload) {
   if (!message || !payload || typeof payload !== 'object') {
     return
@@ -795,6 +839,13 @@ function applyAgentPlan(message, payload) {
   }
   if (Array.isArray(payload.completedTaskKeys)) {
     message.completedTaskKeys = payload.completedTaskKeys.filter((item) => typeof item === 'string' && item)
+  }
+  // 跳过 / 未解决分开存：前者是模型的正当取舍（不应显示为未完成），后者才是真欠账
+  if (Array.isArray(payload.skippedTaskKeys)) {
+    message.skippedTaskKeys = payload.skippedTaskKeys.filter((item) => item && typeof item === 'object' && item.key)
+  }
+  if (Array.isArray(payload.unresolvedTaskKeys)) {
+    message.unresolvedTaskKeys = payload.unresolvedTaskKeys.filter((item) => typeof item === 'string' && item)
   }
 }
 
@@ -829,14 +880,6 @@ function flushStreamDelta() {
 function appendStreamDelta(delta) {
   if (!delta) return
   streamingEngine.appendChunk(delta)
-}
-
-function updateAutoScrollState() {
-  // Now handled by useSmoothScroller
-}
-
-function scheduleAutoScrollStateUpdate() {
-  // Now handled by useSmoothScroller
 }
 
 function extractSessionTitle(messageList) {
@@ -888,15 +931,23 @@ function flushSessionSummary() {
 }
 
 async function fetchKnowledgeBases() {
-  const response = await kbApi.list()
-  knowledgeBases.value = response.data || []
+  try {
+    const response = await kbApi.list()
+    knowledgeBases.value = response.data || []
+  } catch {
+    knowledgeBases.value = []
+  }
 }
 
 async function fetchSkills() {
-  const response = await skillApi.list()
-  availableSkills.value = response.data || []
-  const validSkills = new Set(availableSkills.value.map((item) => item.name))
-  selectedSkillNames.value = selectedSkillNames.value.filter((name) => validSkills.has(name))
+  try {
+    const response = await skillApi.list()
+    availableSkills.value = response.data || []
+    const validSkills = new Set(availableSkills.value.map((item) => item.name))
+    selectedSkillNames.value = selectedSkillNames.value.filter((name) => validSkills.has(name))
+  } catch {
+    availableSkills.value = []
+  }
 }
 
 async function fetchDocuments(kbId) {
@@ -958,6 +1009,8 @@ function createAssistantMessage() {
     kbId: selectedKbId.value,
     role: 'assistant',
     content: '',
+    answerMode: '',
+    clarification: null,
     retrievalConfig: null,
     references: [],
     toolCalls: [],
@@ -968,8 +1021,6 @@ function createAssistantMessage() {
     runId: '',
     runStatus: 'RUNNING',
     createdAt: new Date().toISOString(),
-    liked: false,
-    disliked: false,
     _isNew: true
   }
 }
@@ -1092,6 +1143,9 @@ async function consumeStreamResponse(response, handlers) {
       case 'message':
         handlers.onMessage?.(payload)
         break
+      case 'clarify':
+        handlers.onClarify?.(payload)
+        break
       case 'thinking':
       case 'think':
         handlers.onThinking?.(payload)
@@ -1107,6 +1161,9 @@ async function consumeStreamResponse(response, handlers) {
         break
       case 'agent_plan':
         handlers.onAgentPlan?.(payload)
+        break
+      case 'approval_required':
+        handlers.onApprovalRequired?.(payload)
         break
       case 'run_status':
         handlers.onRunStatus?.(payload)
@@ -1187,6 +1244,7 @@ async function sendMessage() {
   messages.value.push(createAssistantMessage())
   const assistantMessage = messages.value[messages.value.length - 1]
   streamingMessage.value = assistantMessage
+  resetStreamCache()
   isLoading.value = true
   const abortController = new AbortController()
   currentAbortController.value = abortController
@@ -1250,6 +1308,23 @@ async function sendMessage() {
         }
         appendStreamDelta(delta)
       },
+      onClarify(streamPayload) {
+        hasReceivedStreamEvent = true
+        resetStreamTimer()
+        const clarification = typeof streamPayload === 'string'
+          ? streamPayload
+          : (streamPayload?.clarification || '')
+        if (!clarification) return
+        assistantMessage.answerMode = 'clarify'
+        assistantMessage.clarification = clarification
+        if (thinkingTransition.phase.value === 'thinking') {
+          thinkingTransition.transitionToAnswer()
+        }
+        if (!streamingEngine.isStreaming.value) {
+          streamingEngine.start()
+        }
+        appendStreamDelta(clarification)
+      },
       onReferences(streamPayload) {
         hasReceivedStreamEvent = true
         resetStreamTimer()
@@ -1271,6 +1346,22 @@ async function sendMessage() {
         hasReceivedStreamEvent = true
         resetStreamTimer()
         applyAgentPlan(assistantMessage, streamPayload)
+      },
+      onApprovalRequired(streamPayload) {
+        hasReceivedStreamEvent = true
+        resetStreamTimer()
+        // 待确认项挂在消息上由模板渲染成卡片。此刻服务端正阻塞等待结论，
+        // 用户点了按钮才会继续——所以这张卡片必须显眼且不可折叠掉。
+        assistantMessage.approval = {
+          approvalId: streamPayload?.approvalId || '',
+          toolName: streamPayload?.toolName || '',
+          displayName: streamPayload?.displayName || streamPayload?.toolName || '未知工具',
+          source: streamPayload?.source || '',
+          riskSummary: streamPayload?.riskSummary || '',
+          arguments: streamPayload?.arguments || {},
+          timeoutSeconds: Number(streamPayload?.timeoutSeconds) || 0,
+          status: 'PENDING'
+        }
       },
       onRunStatus(streamPayload) {
         hasReceivedStreamEvent = true
@@ -1295,6 +1386,12 @@ async function sendMessage() {
         if (!assistantMessage.content && streamPayload?.answer) {
           assistantMessage.content = streamPayload.answer
         }
+        if (typeof streamPayload?.answerMode === 'string') {
+          assistantMessage.answerMode = streamPayload.answerMode
+        }
+        if (typeof streamPayload?.clarification === 'string') {
+          assistantMessage.clarification = streamPayload.clarification
+        }
         if (streamPayload?.retrievalConfig) {
           assistantMessage.retrievalConfig = streamPayload.retrievalConfig
         }
@@ -1303,6 +1400,10 @@ async function sendMessage() {
         }
         if (streamPayload?.runStatus) {
           assistantMessage.runStatus = streamPayload.runStatus
+        }
+        // 成本与耗时：落库同一份数据，前端直接展示（耗时 / token / 缓存命中）
+        if (streamPayload?.usage && typeof streamPayload.usage === 'object') {
+          assistantMessage.usage = streamPayload.usage
         }
         if (Array.isArray(streamPayload?.agentPlan)) {
           assistantMessage.agentPlan = streamPayload.agentPlan
@@ -1407,21 +1508,6 @@ async function copyMessage(content) {
   ElMessage.success('已复制到剪贴板')
 }
 
-function rateMessage(index, type) {
-  const target = messages.value[index]
-  if (!target) {
-    return
-  }
-
-  if (type === 'like') {
-    target.liked = !target.liked
-    target.disliked = false
-  } else {
-    target.disliked = !target.disliked
-    target.liked = false
-  }
-}
-
 function formatDateTime(value) {
   return new Date(value).toLocaleString('zh-CN', {
     month: '2-digit',
@@ -1496,22 +1582,17 @@ watch(
   { flush: 'post' }
 )
 
-// Sync streaming engine output to the streaming message
+// Single watcher: sync stream content + trigger scroll together.
+// Merging avoids a second reactive trigger — previously the content write
+// fired a separate watcher just to call onContentUpdated, which already
+// throttles internally (100ms).
 watch(
   () => streamingEngine.displayedContent.value,
   (newContent) => {
-    if (streamingMessage.value && newContent) {
-      streamingMessage.value.content = newContent
-    }
-  }
-)
-
-watch(
-  () => streamingMessage.value?.content,
-  async () => {
-    if (!streamingMessage.value?.content) {
+    if (!streamingMessage.value || !newContent) {
       return
     }
+    streamingMessage.value.content = newContent
     smoothScroller.onContentUpdated()
   },
   { flush: 'post' }
@@ -1552,11 +1633,8 @@ onBeforeUnmount(() => {
   height: 100%;
   min-height: 0;
   overflow: hidden;
-  background:
-    radial-gradient(circle at 14% 18%, rgba(123, 211, 255, 0.28), transparent 24%),
-    radial-gradient(circle at 86% 12%, rgba(163, 230, 255, 0.24), transparent 22%),
-    radial-gradient(circle at 72% 82%, rgba(191, 240, 255, 0.18), transparent 24%),
-    linear-gradient(180deg, #f8fbff 0%, #f4f8fc 46%, #eef4fb 100%);
+  /* 透明：统一透出 app 层的宣纸底 + 淡墨晕染，不再自带冷灰渐变补丁 */
+  background: transparent;
 }
 
 .chat-shell {
@@ -1566,34 +1644,36 @@ onBeforeUnmount(() => {
   border-radius: var(--radius-xl);
   position: relative;
   display: grid;
-  grid-template-rows: auto auto minmax(0, 1fr);
+  /* 四行：工具栏 / 检索设置（可折叠） / 消息区 / 输入区（文档流，替代原 absolute 悬浮） */
+  grid-template-rows: auto auto minmax(0, 1fr) auto;
   gap: 14px;
   overflow: hidden;
-  background:
-    linear-gradient(180deg, rgba(255, 255, 255, 0.9), rgba(248, 251, 255, 0.94)),
-    linear-gradient(135deg, rgba(109, 197, 255, 0.08), transparent 35%);
-  border: 1px solid rgba(162, 191, 221, 0.28);
-  box-shadow:
-    inset 0 1px 0 rgba(255, 255, 255, 0.82),
-    0 22px 56px rgba(114, 142, 176, 0.16),
-    0 0 0 1px rgba(234, 241, 248, 0.72);
+  background: var(--bg-surface);
+  border: 1px solid var(--border-light);
+  box-shadow: var(--shadow-sm);
 }
 
 .chat-toolbar {
+  grid-row: 1;
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 16px;
-  padding: 12px 18px;
-  border-radius: 999px;
-  background: linear-gradient(135deg, rgba(255, 255, 255, 0.92), rgba(248, 252, 255, 0.96));
-  border: 1px solid rgba(200, 218, 238, 0.35);
-  box-shadow:
-    inset 0 1px 0 rgba(255, 255, 255, 0.9),
-    0 4px 16px rgba(164, 182, 207, 0.1),
-    0 1px 3px rgba(164, 182, 207, 0.06);
-  backdrop-filter: blur(12px) saturate(140%);
-  -webkit-backdrop-filter: blur(12px) saturate(140%);
+  flex-wrap: wrap;
+  row-gap: 8px;
+  gap: 12px;
+  padding: 2px 6px 0;
+  /* 无框信息条：不再框中套框，与下方内容以留白分隔 */
+  background: transparent;
+}
+
+.toolbar-title {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  font-size: var(--text-base);
+  font-weight: var(--weight-semibold);
+  color: var(--text-primary);
+  white-space: nowrap;
 }
 
 .toolbar-left {
@@ -1603,22 +1683,25 @@ onBeforeUnmount(() => {
 }
 
 .toolbar-desc {
-  color: #5f6f85;
-  font-size: 13px;
+  color: var(--text-secondary);
+  font-size: var(--text-sm);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 220px;
 }
 
 .chip-dot {
-  width: 8px;
-  height: 8px;
+  width: 7px;
+  height: 7px;
   border-radius: 50%;
-  background: var(--accent-color);
-  box-shadow: 0 0 12px rgba(30, 200, 165, 0.56);
+  background: var(--primary-color);
 }
 
 .chat-header-actions {
   display: flex;
   align-items: center;
-  gap: 12px;
+  gap: 8px;
 }
 
 .mode-switch {
@@ -1627,31 +1710,32 @@ onBeforeUnmount(() => {
   gap: 4px;
   padding: 3px;
   border-radius: 999px;
-  background: rgba(241, 245, 249, 0.9);
-  border: 1px solid rgba(210, 222, 236, 0.6);
+  background: var(--bg-surface-dark);
+  border: 1px solid var(--border-light);
   box-shadow: inset 0 1px 2px rgba(0, 0, 0, 0.03);
 }
 
 .mode-chip {
   border: 0;
   background: transparent;
-  color: #7a8ca4;
+  color: var(--text-secondary);
   border-radius: 999px;
   padding: 7px 14px;
-  font-size: 12.5px;
-  font-weight: 600;
+  font-size: var(--text-sm);
+  font-weight: var(--weight-medium);
+  white-space: nowrap;
   cursor: pointer;
   transition: all var(--duration-jelly, 400ms) var(--spring-soft, cubic-bezier(0.34, 1.56, 0.64, 1));
 }
 
 .mode-chip:hover {
-  color: #4a5e75;
+  color: var(--text-primary);
 }
 
 .mode-chip.active {
-  background: #ffffff;
-  color: #1a3a5c;
-  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.06), 0 0 0 1px rgba(0, 0, 0, 0.04);
+  background: var(--bg-surface-strong);
+  color: var(--primary-strong);
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.06), 0 0 0 1px rgba(166, 61, 42, 0.16);
   font-weight: 700;
 }
 
@@ -1663,12 +1747,20 @@ onBeforeUnmount(() => {
   min-width: 100px;
 }
 
-.chat-header-actions :deep(.el-select .el-input__wrapper) {
-  background: rgba(255, 255, 255, 0.92) !important;
+.chat-header-actions :deep(.el-select .el-input__wrapper),
+.chat-header-actions :deep(.el-select__wrapper) {
+  background: rgba(251, 249, 243, 0.96) !important;
   border-radius: 999px !important;
-  box-shadow: 0 0 0 1px rgba(200, 215, 232, 0.5) inset !important;
-  padding: 0 12px !important;
-  height: 34px !important;
+  box-shadow: 0 0 0 1px var(--border-light) inset !important;
+  padding: 0 14px !important;
+  height: 32px !important;
+  min-height: 32px !important;
+}
+
+.chat-header-actions :deep(.el-select__placeholder),
+.chat-header-actions :deep(.el-select__selected-item) {
+  color: var(--text-secondary) !important;
+  font-size: var(--text-sm) !important;
 }
 
 .chat-header-actions :deep(.el-select__placeholder),
@@ -1676,17 +1768,17 @@ onBeforeUnmount(() => {
 .chat-header-actions :deep(.el-input__inner),
 .chat-header-actions :deep(.el-select__caret),
 .chat-header-actions :deep(.el-input__icon) {
-  color: #3d5068 !important;
+  color: var(--text-secondary) !important;
   font-size: 12.5px !important;
 }
 
 .chat-header-actions :deep(.el-button) {
   background: rgba(255, 255, 255, 0.92) !important;
-  border-color: rgba(200, 215, 232, 0.5) !important;
+  border-color: var(--border-light) !important;
   border-radius: 999px !important;
-  color: #3d5068 !important;
-  font-size: 12.5px !important;
-  height: 34px !important;
+  color: var(--text-secondary) !important;
+  font-size: var(--text-sm) !important;
+  height: 32px !important;
   padding: 0 14px !important;
   box-shadow: 0 1px 3px rgba(0, 0, 0, 0.04) !important;
   transition: all var(--duration-jelly, 400ms) var(--spring-soft, cubic-bezier(0.34, 1.56, 0.64, 1)) !important;
@@ -1696,21 +1788,27 @@ onBeforeUnmount(() => {
   transform: scale(1.02);
   box-shadow: 0 3px 10px rgba(0, 0, 0, 0.08) !important;
   background: #ffffff !important;
+  color: var(--primary-strong) !important;
+  border-color: rgba(166, 61, 42, 0.28) !important;
 }
 
 .chat-header-actions :deep(.el-button span),
 .chat-header-actions :deep(.el-button .el-icon) {
-  color: #3d5068 !important;
+  color: var(--text-secondary) !important;
+}
+
+.chat-header-actions :deep(.el-button:hover span),
+.chat-header-actions :deep(.el-button:hover .el-icon) {
+  color: var(--primary-strong) !important;
 }
 
 .retrieval-panel {
+  grid-row: 2;
   padding: 18px 20px;
   border-radius: 24px;
-  background: linear-gradient(135deg, rgba(255, 255, 255, 0.88), rgba(248, 252, 255, 0.94));
-  border: 1px solid rgba(210, 225, 240, 0.4);
-  box-shadow: 0 4px 16px rgba(164, 182, 207, 0.08);
-  backdrop-filter: blur(8px);
-  -webkit-backdrop-filter: blur(8px);
+  background: linear-gradient(135deg, rgba(255, 255, 255, 0.88), rgba(248, 250, 252, 0.94));
+  border: 1px solid var(--border-light);
+  box-shadow: 0 4px 16px rgba(24, 24, 27, 0.05);
   overflow: hidden;
   transform-origin: top center;
 }
@@ -1768,7 +1866,7 @@ onBeforeUnmount(() => {
 
 .skill-option-name {
   min-width: 0;
-  color: #24364d;
+  color: var(--text-primary);
   font-size: 13px;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -1777,8 +1875,8 @@ onBeforeUnmount(() => {
 
 .skill-setting-tip {
   margin-top: 8px;
-  color: #7a8ca4;
-  font-size: 11px;
+  color: var(--text-secondary);
+  font-size: var(--text-sm);
   line-height: 1.5;
 }
 
@@ -1824,16 +1922,14 @@ onBeforeUnmount(() => {
 }
 
 .chat-main {
+  grid-row: 3;
   min-height: 0;
   overflow: auto;
-  padding: 4px 8px 220px;
+  /* 输入区已回归文档流（grid 第四行）；背景透明，与 shell 同一张纸，消除米色补丁 */
+  padding: 4px 8px 16px;
   overscroll-behavior: contain;
   scrollbar-gutter: stable;
   contain: layout paint;
-  background:
-    linear-gradient(180deg, rgba(250, 252, 255, 0.48), rgba(240, 246, 252, 0.72)),
-    radial-gradient(circle at top, rgba(119, 206, 255, 0.08), transparent 38%);
-  border-radius: 28px;
 }
 
 .chat-empty {
@@ -1852,45 +1948,28 @@ onBeforeUnmount(() => {
 }
 
 .empty-icon {
-  position: relative;
-  z-index: 1;
-  width: auto;
-  height: auto;
+  /* 墨方印：与侧栏品牌标同语言 */
+  width: 56px;
+  height: 56px;
+  border-radius: var(--radius-md);
   display: grid;
   place-items: center;
-  color: #76a6d6;
-  filter:
-    drop-shadow(0 0 10px rgba(255, 255, 255, 0.42))
-    drop-shadow(0 0 22px rgba(115, 130, 255, 0.34))
-    drop-shadow(0 0 42px rgba(115, 130, 255, 0.26));
-  animation: breathe var(--duration-breathe, 4s) ease-in-out infinite;
-  will-change: transform, opacity;
-}
-
-.empty-icon:hover {
-  animation-play-state: paused;
-}
-
-.empty-glow {
-  position: absolute;
-  inset: 50% auto auto 50%;
-  width: 180px;
-  height: 180px;
-  transform: translate(-50%, -50%);
-  background:
-    radial-gradient(circle, rgba(132, 146, 255, 0.36), transparent 28%),
-    radial-gradient(circle, rgba(115, 130, 255, 0.18), transparent 48%),
-    radial-gradient(circle, rgba(115, 130, 255, 0.08), transparent 68%);
-  pointer-events: none;
-  animation: glowBreath 3.2s ease-in-out infinite;
-  filter: blur(10px);
+  color: var(--text-inverse, #f9f4ea);
+  background: var(--text-primary, #2e2a23);
+  font-family: var(--font-serif, serif);
+  font-size: 26px;
+  font-weight: var(--weight-semibold, 600);
+  box-shadow: inset 0 0 0 2px rgba(249, 244, 234, 0.28), var(--shadow-sm);
 }
 
 .chat-empty h2 {
-  font-size: 34px;
-  line-height: 1.08;
+  font-family: var(--font-serif, serif);
+  font-size: var(--text-2xl, 26px);
+  font-weight: var(--weight-semibold, 600);
+  letter-spacing: 0.02em;
+  line-height: 1.2;
   margin-bottom: 10px;
-  color: #24364d;
+  color: var(--text-primary);
 }
 
 .chat-empty p {
@@ -1910,9 +1989,9 @@ onBeforeUnmount(() => {
 }
 
 .prompt-chip {
-  border: 1px solid rgba(198, 214, 232, 0.6);
+  border: 1px solid var(--border-light);
   background: rgba(255, 255, 255, 0.9);
-  color: #62778f;
+  color: var(--text-secondary);
   border-radius: 999px;
   padding: 10px 14px;
   font-size: 12px;
@@ -1922,9 +2001,9 @@ onBeforeUnmount(() => {
 }
 
 .prompt-chip:hover {
-  color: #24364d;
-  border-color: rgba(91, 108, 255, 0.22);
-  background: rgba(240, 246, 255, 0.98);
+  color: var(--text-primary);
+  border-color: rgba(166, 61, 42, 0.28);
+  background: rgba(166, 61, 42, 0.04);
   transform: scale(var(--jelly-hover-scale, 1.03));
 }
 
@@ -1988,18 +2067,18 @@ onBeforeUnmount(() => {
 }
 
 .assistant-avatar {
-  background: linear-gradient(135deg, rgba(123, 211, 255, 0.96), rgba(92, 132, 255, 0.86));
+  background: linear-gradient(135deg, #a63d2a, #8c3322);
   color: #ffffff;
   box-shadow:
-    0 12px 24px rgba(101, 141, 192, 0.18),
+    0 12px 24px rgba(166, 61, 42, 0.24),
     inset 0 1px 0 rgba(255, 255, 255, 0.22);
 }
 
 .user-avatar {
-  background: linear-gradient(135deg, rgba(210, 239, 255, 0.92), rgba(181, 219, 255, 0.96));
-  color: #4f86c6;
+  background: linear-gradient(135deg, rgba(166, 61, 42, 0.14), rgba(166, 61, 42, 0.06));
+  color: var(--primary-strong);
   box-shadow:
-    0 10px 20px rgba(151, 177, 210, 0.14),
+    0 10px 20px rgba(166, 61, 42, 0.12),
     inset 0 1px 0 rgba(255, 255, 255, 0.52);
 }
 
@@ -2013,12 +2092,12 @@ onBeforeUnmount(() => {
 .assistant-aux-bubble {
   position: relative;
   border-radius: 24px;
-  border: 1px solid rgba(188, 207, 229, 0.55);
+  border: 1px solid var(--border-light);
   background:
-    linear-gradient(180deg, rgba(239, 246, 255, 0.96), rgba(247, 251, 255, 0.98)),
-    radial-gradient(circle at top left, rgba(122, 188, 255, 0.12), transparent 38%);
+    linear-gradient(180deg, rgba(255, 255, 255, 0.96), rgba(248, 250, 252, 0.98)),
+    radial-gradient(circle at top left, rgba(166, 61, 42, 0.08), transparent 38%);
   box-shadow:
-    0 18px 36px rgba(159, 181, 208, 0.12),
+    0 18px 36px rgba(24, 24, 27, 0.06),
     inset 0 1px 0 rgba(255, 255, 255, 0.84);
   overflow: hidden;
 }
@@ -2033,8 +2112,8 @@ onBeforeUnmount(() => {
   justify-content: space-between;
   gap: 10px;
   padding: 12px 14px;
-  background: linear-gradient(180deg, rgba(228, 240, 255, 0.84), rgba(240, 247, 255, 0.76));
-  border-bottom: 1px solid rgba(188, 207, 229, 0.45);
+  background: linear-gradient(180deg, rgba(244, 244, 245, 0.84), rgba(248, 250, 252, 0.76));
+  border-bottom: 1px solid var(--border-light);
 }
 
 .execution-bubble-meta-left {
@@ -2055,15 +2134,16 @@ onBeforeUnmount(() => {
   border: 0;
   border-radius: 999px;
   padding: 6px 10px;
-  background: rgba(236, 243, 250, 0.92);
-  color: #5d738d;
-  font-size: 11px;
-  font-weight: 800;
+  background: rgba(244, 244, 245, 0.92);
+  color: var(--text-secondary);
+  font-size: var(--text-sm);
+  font-weight: 600;
   cursor: pointer;
 }
 
 .execution-collapse-btn:hover {
-  background: rgba(227, 237, 248, 0.98);
+  background: rgba(166, 61, 42, 0.08);
+  color: var(--primary-strong);
 }
 
 .execution-bubble-kicker {
@@ -2071,15 +2151,15 @@ onBeforeUnmount(() => {
   align-items: center;
   padding: 4px 9px;
   border-radius: 999px;
-  background: rgba(77, 141, 255, 0.12);
-  color: #4b72b4;
-  font-size: 11px;
-  font-weight: 800;
+  background: rgba(166, 61, 42, 0.12);
+  color: var(--primary-strong);
+  font-size: var(--text-sm);
+  font-weight: 600;
 }
 
 .execution-bubble-meta small {
-  color: #6f86a1;
-  font-size: 11px;
+  color: var(--text-secondary);
+  font-size: var(--text-sm);
   font-weight: 700;
 }
 
@@ -2091,7 +2171,7 @@ onBeforeUnmount(() => {
 .message-meta {
   display: flex;
   gap: 10px;
-  color: #7a8ca4;
+  color: var(--text-secondary);
   font-size: 12px;
   font-weight: 700;
   padding-inline: 4px;
@@ -2099,62 +2179,35 @@ onBeforeUnmount(() => {
 
 .message-bubble {
   position: relative;
-  padding: 18px 22px;
-  border-radius: 28px;
-  line-height: 1.82;
-  font-size: 14.5px;
+  /* 平面卡片：层级靠发丝边框，不靠投影堆叠（文档 §5.1） */
+  padding: 14px 18px;
+  border-radius: var(--radius-md);
+  line-height: 1.75;
+  font-size: var(--text-md);
   letter-spacing: 0;
-  border: 1px solid rgba(199, 214, 231, 0.58);
-  box-shadow:
-    0 20px 44px rgba(159, 181, 208, 0.12),
-    0 4px 12px rgba(159, 181, 208, 0.06),
-    inset 0 1px 0 rgba(255, 255, 255, 0.82);
+  border: 1px solid var(--border-light);
+  box-shadow: var(--shadow-xs);
   transition:
     box-shadow var(--transition-fast),
-    transform var(--transition-fast),
     border-color var(--transition-fast);
-  overflow: hidden;
-  backdrop-filter: blur(16px) saturate(130%);
-  -webkit-backdrop-filter: blur(16px) saturate(130%);
 }
 
 .message-row:hover .message-bubble {
-  transform: translateY(-1px);
+  border-color: var(--border-2, rgba(72, 60, 42, 0.22));
 }
 
 .message-bubble.is-streaming {
-  box-shadow:
-    0 22px 48px rgba(159, 181, 208, 0.16),
-    0 0 28px rgba(118, 196, 255, 0.1),
-    inset 0 1px 0 rgba(255, 255, 255, 0.84);
+  border-color: var(--border-medium);
+  box-shadow: var(--shadow-glow-soft);
 }
 
-.message-bubble::before {
-  content: '';
-  position: absolute;
-  inset: 0;
-  padding: 1px;
-  border-radius: inherit;
-  background:
-    linear-gradient(135deg, rgba(255, 255, 255, 0.88), rgba(255, 255, 255, 0.18) 28%, rgba(178, 211, 245, 0.16) 72%, rgba(255, 255, 255, 0.5) 100%);
-  -webkit-mask:
-    linear-gradient(#fff 0 0) content-box,
-    linear-gradient(#fff 0 0);
-  -webkit-mask-composite: xor;
-  mask-composite: exclude;
-  pointer-events: none;
-  opacity: 0.92;
+.message-bubble.is-clarify {
+  background: linear-gradient(135deg, rgba(255, 244, 224, 0.92), rgba(255, 250, 235, 0.88));
+  border-left: 3px solid rgba(162, 115, 44, 0.55);
 }
 
-.message-bubble::after {
-  content: '';
-  position: absolute;
-  inset: 1px;
-  border-radius: calc(28px - 1px);
-  background:
-    linear-gradient(180deg, rgba(255, 255, 255, 0.34), rgba(255, 255, 255, 0.08) 24%, transparent 44%),
-    radial-gradient(circle at top left, rgba(255, 255, 255, 0.22), transparent 36%);
-  pointer-events: none;
+.message-bubble.is-clarify::before {
+  background: linear-gradient(135deg, rgba(162, 115, 44, 0.3), rgba(255, 255, 255, 0.2) 60%, rgba(162, 115, 44, 0.15));
 }
 
 .message-stream-md {
@@ -2163,6 +2216,106 @@ onBeforeUnmount(() => {
 
 .message-stream-md :deep(p) {
   margin: 0;
+}
+
+/* 正文行内标记（来源标注、参数与状态符）：统一为"朱砂小签"质感，
+   避免浏览器默认等宽样式把回答挤成一片乱麻 */
+.message-bubble :deep(:not(pre) > code) {
+  font-family: 'JetBrains Mono', 'Cascadia Code', Consolas, monospace;
+  font-size: 0.84em;
+  padding: 0.1em 0.5em;
+  margin: 0 1px;
+  border-radius: 5px;
+  color: var(--accent-color, #a63d2a);
+  background: color-mix(in srgb, var(--accent-color, #a63d2a) 8%, transparent);
+  border: 1px solid color-mix(in srgb, var(--accent-color, #a63d2a) 20%, transparent);
+  word-break: break-word;
+}
+
+.message-bubble :deep(strong) {
+  font-weight: 650;
+  color: var(--text-primary);
+}
+
+/* ── Markdown 正文排版：标题成节、列表成行，拒绝一堵字墙 ────────── */
+.message-bubble :deep(p) {
+  margin: 0 0 10px;
+  line-height: 1.78;
+}
+.message-bubble :deep(p:last-child) {
+  margin-bottom: 0;
+}
+
+.message-bubble :deep(h1),
+.message-bubble :deep(h2),
+.message-bubble :deep(h3),
+.message-bubble :deep(h4) {
+  margin: 18px 0 8px;
+  font-weight: 650;
+  color: var(--text-primary);
+  line-height: 1.4;
+  padding-left: 9px;
+  border-left: 3px solid color-mix(in srgb, var(--accent-color, #a63d2a) 55%, transparent);
+}
+.message-bubble :deep(h1) { font-size: 1.25em; }
+.message-bubble :deep(h2) { font-size: 1.14em; }
+.message-bubble :deep(h3) { font-size: 1.05em; }
+.message-bubble :deep(h4) { font-size: 1em; }
+.message-bubble :deep(h1:first-child),
+.message-bubble :deep(h2:first-child),
+.message-bubble :deep(h3:first-child) {
+  margin-top: 2px;
+}
+
+.message-bubble :deep(ul),
+.message-bubble :deep(ol) {
+  margin: 4px 0 12px;
+  padding-left: 1.4em;
+}
+.message-bubble :deep(li) {
+  margin: 5px 0;
+  line-height: 1.7;
+}
+.message-bubble :deep(li::marker) {
+  color: var(--accent-color, #a63d2a);
+}
+.message-bubble :deep(li > p) {
+  margin: 0;
+}
+
+.message-bubble :deep(blockquote) {
+  margin: 8px 0;
+  padding: 6px 12px;
+  border-left: 3px solid color-mix(in srgb, var(--accent-color, #a63d2a) 45%, transparent);
+  background: color-mix(in srgb, var(--accent-color, #a63d2a) 5%, transparent);
+  border-radius: 0 6px 6px 0;
+  color: var(--text-secondary, #888);
+}
+.message-bubble :deep(blockquote p) {
+  margin: 0;
+}
+
+.message-bubble :deep(hr) {
+  border: none;
+  border-top: 1px dashed color-mix(in srgb, var(--accent-color, #a63d2a) 28%, transparent);
+  margin: 14px 0;
+}
+
+.message-bubble :deep(table) {
+  width: 100%;
+  margin: 8px 0 12px;
+  border-collapse: collapse;
+  font-size: 0.92em;
+}
+.message-bubble :deep(th),
+.message-bubble :deep(td) {
+  border: 1px solid color-mix(in srgb, var(--accent-color, #a63d2a) 14%, transparent);
+  padding: 5px 10px;
+  text-align: left;
+}
+.message-bubble :deep(th) {
+  background: color-mix(in srgb, var(--accent-color, #a63d2a) 7%, transparent);
+  font-weight: 650;
 }
 
 .stream-cursor {
@@ -2186,9 +2339,9 @@ onBeforeUnmount(() => {
   gap: 8px;
   padding: 10px 16px;
   border-radius: 16px;
-  background: rgba(219, 242, 255, 0.82);
-  border: 1px solid rgba(162, 203, 230, 0.4);
-  color: #4f88c7;
+  background: rgba(166, 61, 42, 0.08);
+  border: 1px solid rgba(166, 61, 42, 0.22);
+  color: var(--primary-strong);
   font-size: 13px;
   font-weight: 600;
   animation: thinkingPulse 2s ease-in-out infinite;
@@ -2234,39 +2387,19 @@ onBeforeUnmount(() => {
 }
 
 .message-stack.assistant .message-bubble {
-  background:
-    linear-gradient(180deg, rgba(255, 255, 255, 0.98), rgba(248, 251, 255, 0.98)),
-    linear-gradient(135deg, rgba(140, 211, 255, 0.06), transparent 42%);
-  color: #24364d;
-  border-color: rgba(203, 217, 234, 0.72);
-  border-top-left-radius: 14px;
-  font-family: 'Inter', 'Plus Jakarta Sans', 'PingFang SC', 'Microsoft YaHei', sans-serif;
+  background: var(--bg-surface-strong);
+  color: var(--text-primary);
+  border-color: var(--border-light);
+  border-top-left-radius: var(--radius-xs);
 }
 
 .message-stack.user .message-bubble {
-  background:
-    linear-gradient(135deg, rgba(224, 240, 255, 0.98), rgba(208, 232, 255, 0.98) 56%, rgba(196, 226, 255, 0.96)),
-    linear-gradient(180deg, rgba(255, 255, 255, 0.42), transparent 34%);
-  color: #214c79;
-  border-color: rgba(171, 203, 234, 0.72);
-  border-top-right-radius: 14px;
-  font-family: 'Plus Jakarta Sans', 'PingFang SC', 'Microsoft YaHei', sans-serif;
-  font-weight: 600;
-  box-shadow:
-    0 18px 36px rgba(150, 184, 220, 0.18),
-    0 4px 10px rgba(150, 184, 220, 0.08),
-    inset 0 1px 0 rgba(255, 255, 255, 0.7);
-}
-
-.message-stack.user .message-bubble::before {
-  background:
-    linear-gradient(135deg, rgba(255, 255, 255, 0.78), rgba(255, 255, 255, 0.14) 34%, rgba(120, 182, 241, 0.24) 100%);
-}
-
-.message-stack.user .message-bubble::after {
-  background:
-    linear-gradient(180deg, rgba(255, 255, 255, 0.26), rgba(255, 255, 255, 0.06) 26%, transparent 42%),
-    radial-gradient(circle at top left, rgba(255, 255, 255, 0.16), transparent 36%);
+  background: var(--primary-soft);
+  color: var(--text-primary);
+  border-color: var(--border-medium);
+  border-top-right-radius: var(--radius-xs);
+  font-weight: var(--weight-medium);
+  box-shadow: none;
 }
 
 .message-bubble :deep(pre) {
@@ -2274,14 +2407,14 @@ onBeforeUnmount(() => {
   padding: 16px 18px;
   border-radius: 18px;
   background:
-    linear-gradient(180deg, rgba(252, 254, 255, 0.99), rgba(245, 249, 253, 0.99)),
-    linear-gradient(135deg, rgba(143, 185, 227, 0.08), transparent 44%);
-  border: 1px solid rgba(188, 204, 222, 0.92);
+    linear-gradient(180deg, rgba(252, 254, 252, 0.99), rgba(245, 249, 246, 0.99)),
+    linear-gradient(135deg, rgba(166, 61, 42, 0.06), transparent 44%);
+  border: 1px solid var(--border-light);
   box-shadow:
     inset 0 1px 0 rgba(255, 255, 255, 0.72),
-    0 12px 28px rgba(142, 164, 191, 0.12);
+    0 12px 28px rgba(24, 24, 27, 0.06);
   margin: 12px 0;
-  color: #22364f;
+  color: var(--text-primary);
 }
 
 .message-bubble :deep(code) {
@@ -2293,12 +2426,12 @@ onBeforeUnmount(() => {
 .message-bubble :deep(pre code),
 .message-bubble :deep(.hljs) {
   background: transparent;
-  color: #22364f;
+  color: var(--text-primary);
 }
 
 .message-bubble :deep(.hljs-comment),
 .message-bubble :deep(.hljs-quote) {
-  color: #6f8096;
+  color: var(--text-muted);
 }
 
 .message-bubble :deep(.hljs-keyword),
@@ -2306,14 +2439,14 @@ onBeforeUnmount(() => {
 .message-bubble :deep(.hljs-built_in),
 .message-bubble :deep(.hljs-name),
 .message-bubble :deep(.hljs-tag) {
-  color: #8b3fd1;
+  color: #7c3aed;
 }
 
 .message-bubble :deep(.hljs-string),
 .message-bubble :deep(.hljs-attr),
 .message-bubble :deep(.hljs-template-tag),
 .message-bubble :deep(.hljs-template-variable) {
-  color: #176d52;
+  color: #8c3322;
 }
 
 .message-bubble :deep(.hljs-number),
@@ -2334,24 +2467,24 @@ onBeforeUnmount(() => {
   display: block;
   white-space: pre-wrap;
   word-break: break-word;
-  color: #1f334a;
+  color: var(--text-primary);
 }
 
 .message-bubble :deep(:not(pre) > code) {
   display: inline-block;
   padding: 2px 10px;
   border-radius: 10px;
-  background: rgba(231, 239, 248, 0.92);
-  border: 2px solid rgba(150, 176, 208, 0.95);
-  color: #31465f;
+  background: rgba(166, 61, 42, 0.08);
+  border: 1px solid rgba(166, 61, 42, 0.18);
+  color: var(--primary-strong);
   font-size: 12px;
   line-height: 1.5;
   vertical-align: baseline;
 }
 
 .message-bubble :deep(p) {
-  margin: 0 0 12px;
-  line-height: 1.9;
+  margin: 0 0 10px;
+  line-height: 1.75;
 }
 
 .message-bubble :deep(p:last-child) {
@@ -2372,13 +2505,13 @@ onBeforeUnmount(() => {
 .message-bubble :deep(blockquote) {
   margin: 12px 0;
   padding: 12px 16px;
-  border-left: 5px solid #5f95d4;
-  background: linear-gradient(180deg, rgba(241, 246, 252, 0.96), rgba(247, 250, 255, 0.98));
-  border-top: 2px solid rgba(176, 200, 228, 0.9);
-  border-right: 2px solid rgba(176, 200, 228, 0.9);
-  border-bottom: 2px solid rgba(176, 200, 228, 0.9);
+  border-left: 5px solid var(--primary-color);
+  background: linear-gradient(180deg, rgba(248, 250, 252, 0.96), rgba(252, 254, 252, 0.98));
+  border-top: 1px solid var(--border-light);
+  border-right: 1px solid var(--border-light);
+  border-bottom: 1px solid var(--border-light);
   border-radius: 0 16px 16px 0;
-  color: #50657e;
+  color: var(--text-secondary);
 }
 
 .message-bubble :deep(h1),
@@ -2386,9 +2519,9 @@ onBeforeUnmount(() => {
 .message-bubble :deep(h3),
 .message-bubble :deep(h4) {
   margin: 18px 0 10px;
-  font-weight: 800;
+  font-weight: 600;
   line-height: 1.4;
-  color: #1f334a;
+  color: var(--text-primary);
 }
 
 .message-bubble :deep(h1) {
@@ -2407,20 +2540,20 @@ onBeforeUnmount(() => {
   border: 0;
   height: 2px;
   margin: 16px 0;
-  background: linear-gradient(90deg, rgba(148, 172, 201, 0), rgba(126, 156, 192, 0.96), rgba(148, 172, 201, 0));
+  background: linear-gradient(90deg, rgba(161, 161, 170, 0), rgba(113, 113, 122, 0.5), rgba(161, 161, 170, 0));
 }
 
 .message-bubble :deep(a) {
-  color: #2d6fbd;
+  color: var(--primary-strong);
   text-decoration: none;
-  border-bottom: 1px solid rgba(45, 111, 189, 0.25);
+  border-bottom: 1px solid rgba(166, 61, 42, 0.3);
   padding-bottom: 1px;
   transition: color var(--transition-fast), border-color var(--transition-fast), background var(--transition-fast);
 }
 
 .message-bubble :deep(a:hover) {
-  color: #1d5ea8;
-  border-color: rgba(29, 94, 168, 0.46);
+  color: var(--primary-color);
+  border-color: rgba(166, 61, 42, 0.5);
 }
 
 .message-bubble :deep(a[href^="/"]) {
@@ -2429,14 +2562,14 @@ onBeforeUnmount(() => {
   gap: 6px;
   padding: 4px 10px;
   border-radius: 10px;
-  background: rgba(236, 243, 250, 0.92);
-  border: 2px solid rgba(150, 176, 208, 0.95);
-  color: #34577d;
+  background: rgba(166, 61, 42, 0.08);
+  border: 1px solid rgba(166, 61, 42, 0.22);
+  color: var(--primary-strong);
   font-weight: 700;
 }
 
 .message-bubble :deep(a[href^="/"]:hover) {
-  background: rgba(229, 239, 250, 0.98);
+  background: rgba(166, 61, 42, 0.14);
 }
 
 .message-bubble :deep(table) {
@@ -2446,26 +2579,26 @@ onBeforeUnmount(() => {
   margin: 14px 0;
   overflow: hidden;
   border-radius: 16px;
-  border: 2px solid rgba(158, 182, 210, 0.98);
-  background: rgba(250, 252, 255, 0.98);
-  box-shadow: 0 8px 22px rgba(173, 189, 211, 0.08);
+  border: 1px solid var(--border-light);
+  background: rgba(255, 255, 255, 0.98);
+  box-shadow: 0 8px 22px rgba(24, 24, 27, 0.04);
 }
 
 .message-bubble :deep(th),
 .message-bubble :deep(td) {
   padding: 12px 14px;
-  border-right: 2px solid rgba(196, 213, 232, 0.95);
-  border-bottom: 2px solid rgba(196, 213, 232, 0.95);
+  border-right: 1px solid var(--border-light);
+  border-bottom: 1px solid var(--border-light);
   text-align: left;
   vertical-align: top;
   line-height: 1.7;
 }
 
 .message-bubble :deep(th) {
-  background: linear-gradient(180deg, rgba(244, 248, 252, 0.98), rgba(238, 243, 249, 0.98));
-  font-weight: 800;
-  color: #2d425a;
-  border-bottom: 2px solid rgba(158, 182, 210, 0.98);
+  background: linear-gradient(180deg, rgba(248, 250, 252, 0.98), rgba(244, 244, 245, 0.98));
+  font-weight: 600;
+  color: var(--text-primary);
+  border-bottom: 1px solid var(--border-light);
 }
 
 .message-bubble :deep(tr:last-child td) {
@@ -2475,13 +2608,6 @@ onBeforeUnmount(() => {
 .message-bubble :deep(th:last-child),
 .message-bubble :deep(td:last-child) {
   border-right: 0;
-}
-
-.reference-panel {
-  border-radius: 18px;
-  background: linear-gradient(180deg, rgba(255, 255, 255, 0.86), rgba(244, 249, 254, 0.94));
-  border: 1px solid rgba(194, 211, 228, 0.4);
-  overflow: hidden;
 }
 
 .retrieval-summary {
@@ -2494,9 +2620,9 @@ onBeforeUnmount(() => {
 .retrieval-summary-chip {
   padding: 4px 8px;
   border-radius: 999px;
-  background: rgba(91, 108, 255, 0.12);
-  color: #dbe6ff;
-  font-size: 10px;
+  background: rgba(166, 61, 42, 0.12);
+  color: var(--primary-strong);
+  font-size: var(--text-sm);
   font-weight: 700;
 }
 
@@ -2506,92 +2632,150 @@ onBeforeUnmount(() => {
   word-break: break-word;
 }
 
-.reference-header {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  padding: 12px 14px;
-  border-bottom: 1px solid rgba(91, 108, 255, 0.1);
-  font-size: 12px;
-  font-weight: 800;
-}
-
-.reference-header small {
-  color: var(--text-muted);
-  font-size: 11px;
-}
-
-.reference-list {
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-  padding: 12px 14px 14px;
-}
-
-.reference-item {
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-  padding: 12px 14px;
-  border-radius: 14px;
-  background: rgba(255, 255, 255, 0.04);
-  content-visibility: auto;
-  contain-intrinsic-size: 120px;
-}
-
-.reference-top {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 12px;
-}
-
-.reference-badges {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 6px;
-}
-
-.reference-badge {
-  padding: 4px 8px;
-  border-radius: 999px;
-  background: rgba(255, 255, 255, 0.08);
-  color: var(--text-secondary);
-  font-size: 10px;
-  font-weight: 700;
-}
-
-.reference-badge.score {
-  background: rgba(91, 108, 255, 0.16);
-  color: #dbe6ff;
-}
-
-.reference-badge.rerank {
-  background: rgba(34, 197, 94, 0.18);
-  color: #dcfce7;
-}
-
-.reference-reason {
-  color: #b8c3ff;
-  font-size: 12px;
-  line-height: 1.5;
-}
-
-.reference-text {
-  font-size: 12px;
-  color: var(--text-secondary);
-  line-height: 1.6;
-  display: -webkit-box;
-  -webkit-line-clamp: 4;
-  -webkit-box-orient: vertical;
-  overflow: hidden;
-}
 
 .tool-panel {
   border-radius: 18px;
-  background: linear-gradient(180deg, rgba(255, 255, 255, 0.86), rgba(244, 249, 254, 0.94));
-  border: 1px solid rgba(194, 211, 228, 0.4);
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.86), rgba(248, 250, 252, 0.94));
+  border: 1px solid var(--border-light);
   overflow: hidden;
+}
+
+/* ---- 工具审批卡片：服务端正阻塞等待结论，因此必须显眼且不受折叠影响 ---- */
+.approval-card {
+  margin: 10px 0 12px;
+  padding: 12px 14px;
+  border-radius: 12px;
+  border: 1px solid rgba(245, 158, 11, 0.45);
+  background: linear-gradient(180deg, rgba(255, 251, 235, 0.96), rgba(255, 247, 237, 0.92));
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.approval-card.approval-approved {
+  border-color: rgba(34, 197, 94, 0.4);
+  background: linear-gradient(180deg, rgba(240, 253, 244, 0.95), rgba(236, 253, 245, 0.9));
+}
+
+.approval-card.approval-rejected,
+.approval-card.approval-failed {
+  border-color: rgba(148, 163, 184, 0.5);
+  background: linear-gradient(180deg, rgba(248, 250, 252, 0.95), rgba(241, 245, 249, 0.9));
+}
+
+.approval-card-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.approval-card-head strong {
+  font-size: 13px;
+  color: #1f2937;
+  word-break: break-all;
+}
+
+.approval-card-head small {
+  color: #6b7280;
+  font-size: 11px;
+}
+
+.approval-badge {
+  padding: 2px 8px;
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 600;
+  color: #92400e;
+  background: rgba(251, 191, 36, 0.28);
+}
+
+.approval-risk {
+  margin: 0;
+  font-size: 12px;
+  line-height: 1.5;
+  color: #92400e;
+}
+
+.approval-args {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.approval-args-label {
+  font-size: 11px;
+  color: #6b7280;
+}
+
+.approval-args pre {
+  margin: 0;
+  padding: 8px 10px;
+  border-radius: 8px;
+  background: rgba(15, 23, 42, 0.06);
+  font-size: 11px;
+  line-height: 1.5;
+  color: #334155;
+  overflow-x: auto;
+  max-height: 140px;
+}
+
+.approval-card-foot {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.approval-hint {
+  color: #92400e;
+  font-size: 11px;
+}
+
+.approval-result {
+  color: #64748b;
+  font-size: 11px;
+}
+
+.approval-actions {
+  display: inline-flex;
+  gap: 8px;
+  margin-left: auto;
+}
+
+.approval-btn {
+  padding: 5px 14px;
+  border-radius: 8px;
+  border: 1px solid transparent;
+  font-size: 12px;
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+
+.approval-btn:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
+.approval-btn-reject {
+  background: rgba(255, 255, 255, 0.9);
+  border-color: rgba(148, 163, 184, 0.6);
+  color: #475569;
+}
+
+.approval-btn-reject:hover:not(:disabled) {
+  background: #fff;
+  border-color: #94a3b8;
+}
+
+.approval-btn-approve {
+  background: #f59e0b;
+  color: #fff;
+}
+
+.approval-btn-approve:hover:not(:disabled) {
+  background: #d97706;
 }
 
 .agent-step-panel {
@@ -2622,10 +2806,10 @@ onBeforeUnmount(() => {
   max-width: 220px;
   padding: 3px 8px;
   border-radius: 999px;
-  background: rgba(236, 243, 250, 0.92);
-  border: 1px solid rgba(209, 221, 235, 0.7);
-  color: #5d738d;
-  font-size: 10px;
+  background: rgba(244, 244, 245, 0.92);
+  border: 1px solid var(--border-light);
+  color: var(--text-secondary);
+  font-size: var(--text-sm);
   font-family: 'JetBrains Mono', 'Fira Code', 'Consolas', monospace;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -2634,14 +2818,14 @@ onBeforeUnmount(() => {
 
 .agent-step-header {
   padding: 12px 14px;
-  border-bottom: 1px solid rgba(91, 108, 255, 0.08);
+  border-bottom: 1px solid var(--border-light);
   font-size: 12px;
-  font-weight: 800;
+  font-weight: 600;
 }
 
 .agent-step-header small {
   color: var(--text-muted);
-  font-size: 11px;
+  font-size: var(--text-sm);
 }
 
 .execution-progress-strip {
@@ -2649,8 +2833,8 @@ onBeforeUnmount(() => {
   flex-direction: column;
   gap: 10px;
   padding: 12px 14px;
-  border-bottom: 1px solid rgba(91, 108, 255, 0.08);
-  background: linear-gradient(180deg, rgba(252, 254, 255, 0.95), rgba(246, 250, 255, 0.92));
+  border-bottom: 1px solid var(--border-light);
+  background: linear-gradient(180deg, rgba(252, 254, 252, 0.95), rgba(248, 250, 252, 0.92));
 }
 
 .execution-progress-copy {
@@ -2659,15 +2843,27 @@ onBeforeUnmount(() => {
   gap: 4px;
 }
 
+.execution-usage-line {
+  margin-top: 8px;
+  padding-top: 8px;
+  border-top: 1px dashed var(--border-subtle, rgba(255, 255, 255, 0.08));
+}
+
+.execution-usage-line small {
+  color: var(--text-tertiary);
+  font-size: var(--text-xs, 12px);
+  line-height: 1.5;
+}
+
 .execution-progress-copy strong {
-  color: #24364d;
+  color: var(--text-primary);
   font-size: 13px;
-  font-weight: 800;
+  font-weight: 600;
 }
 
 .execution-progress-copy small {
-  color: #70839c;
-  font-size: 11px;
+  color: var(--text-secondary);
+  font-size: var(--text-sm);
   line-height: 1.5;
 }
 
@@ -2676,7 +2872,7 @@ onBeforeUnmount(() => {
   width: 100%;
   height: 8px;
   border-radius: 999px;
-  background: rgba(209, 221, 235, 0.62);
+  background: rgba(228, 228, 231, 0.62);
   overflow: hidden;
 }
 
@@ -2684,7 +2880,7 @@ onBeforeUnmount(() => {
   position: absolute;
   inset: 0 auto 0 0;
   border-radius: inherit;
-  background: linear-gradient(90deg, #67b6ff, #5b6cff);
+  background: linear-gradient(90deg, #a63d2a, #8c3322);
   transition: width 180ms ease;
 }
 
@@ -2700,24 +2896,24 @@ onBeforeUnmount(() => {
   flex-direction: column;
   gap: 4px;
   padding: 12px 14px;
-  border-bottom: 1px solid rgba(91, 108, 255, 0.08);
-  background: linear-gradient(180deg, rgba(244, 248, 255, 0.92), rgba(249, 251, 255, 0.92));
+  border-bottom: 1px solid var(--border-light);
+  background: linear-gradient(180deg, rgba(248, 250, 252, 0.92), rgba(252, 254, 252, 0.92));
 }
 
 .execution-current-label {
-  color: #7a8ca4;
-  font-size: 11px;
+  color: var(--text-secondary);
+  font-size: var(--text-sm);
   font-weight: 700;
 }
 
 .execution-current-task strong {
-  color: #24364d;
+  color: var(--text-primary);
   font-size: 14px;
-  font-weight: 800;
+  font-weight: 600;
 }
 
 .execution-current-task small {
-  color: #6d819a;
+  color: var(--text-secondary);
   font-size: 12px;
   line-height: 1.5;
 }
@@ -2738,7 +2934,7 @@ onBeforeUnmount(() => {
   bottom: 18px;
   width: 2px;
   border-radius: 999px;
-  background: linear-gradient(180deg, rgba(170, 194, 224, 0.8), rgba(208, 223, 241, 0.35));
+  background: linear-gradient(180deg, rgba(166, 61, 42, 0.5), rgba(228, 228, 231, 0.5));
   pointer-events: none;
 }
 
@@ -2750,7 +2946,7 @@ onBeforeUnmount(() => {
   padding: 12px 14px;
   border-radius: 16px;
   background: rgba(255, 255, 255, 0.72);
-  border: 1px solid rgba(197, 214, 233, 0.72);
+  border: 1px solid var(--border-light);
   transition:
     transform var(--transition-fast),
     box-shadow var(--transition-fast),
@@ -2759,21 +2955,21 @@ onBeforeUnmount(() => {
 }
 
 .execution-task-item.status-running {
-  border-color: rgba(245, 158, 11, 0.28);
-  box-shadow: inset 0 0 0 1px rgba(245, 158, 11, 0.12);
+  border-color: rgba(162, 115, 44, 0.28);
+  box-shadow: inset 0 0 0 1px rgba(162, 115, 44, 0.12);
 }
 
 .execution-task-item.status-success {
-  border-color: rgba(34, 197, 94, 0.2);
+  border-color: rgba(92, 122, 94, 0.2);
   animation: taskSuccessGlow 520ms ease-out;
 }
 
 .execution-task-item.status-failed {
-  border-color: rgba(239, 68, 68, 0.22);
+  border-color: rgba(166, 61, 42, 0.22);
 }
 
 .execution-task-item.status-partial {
-  border-color: rgba(245, 158, 11, 0.24);
+  border-color: rgba(162, 115, 44, 0.24);
   background: linear-gradient(180deg, rgba(255, 251, 243, 0.94), rgba(255, 255, 255, 0.82));
 }
 
@@ -2784,10 +2980,10 @@ onBeforeUnmount(() => {
 
 .execution-task-item.current {
   transform: translateY(-1px);
-  background: linear-gradient(180deg, rgba(255, 255, 255, 0.9), rgba(246, 250, 255, 0.96));
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.9), rgba(248, 250, 252, 0.96));
   box-shadow:
-    0 12px 28px rgba(157, 181, 209, 0.14),
-    inset 0 0 0 1px rgba(118, 165, 235, 0.12);
+    0 12px 28px rgba(24, 24, 27, 0.08),
+    inset 0 0 0 1px rgba(166, 61, 42, 0.18);
 }
 
 .execution-task-item.current::after {
@@ -2798,10 +2994,10 @@ onBeforeUnmount(() => {
   width: 8px;
   height: 8px;
   border-radius: 50%;
-  background: rgba(77, 141, 255, 0.9);
+  background: rgba(166, 61, 42, 0.9);
   box-shadow:
-    0 0 0 6px rgba(77, 141, 255, 0.12),
-    0 0 0 12px rgba(77, 141, 255, 0.06);
+    0 0 0 6px rgba(166, 61, 42, 0.12),
+    0 0 0 12px rgba(166, 61, 42, 0.06);
   transform: translateY(-50%);
   animation: executionPulse 1.8s ease-out infinite;
   pointer-events: none;
@@ -2813,34 +3009,34 @@ onBeforeUnmount(() => {
   border-radius: 50%;
   display: grid;
   place-items: center;
-  background: rgba(91, 108, 255, 0.1);
-  color: #4d63d4;
+  background: rgba(166, 61, 42, 0.1);
+  color: var(--primary-strong);
   font-size: 12px;
-  font-weight: 800;
+  font-weight: 600;
   position: relative;
   z-index: 1;
-  box-shadow: 0 0 0 4px rgba(241, 247, 255, 0.96);
+  box-shadow: 0 0 0 4px rgba(248, 250, 252, 0.96);
 }
 
 .execution-task-item.status-success .execution-task-index {
-  background: rgba(34, 197, 94, 0.14);
-  color: #1f9b58;
+  background: rgba(92, 122, 94, 0.14);
+  color: #4a684c;
 }
 
 .execution-task-item.status-running .execution-task-index,
 .execution-task-item.current .execution-task-index {
-  background: rgba(77, 141, 255, 0.16);
-  color: #356fcb;
+  background: rgba(166, 61, 42, 0.18);
+  color: var(--primary-strong);
 }
 
 .execution-task-item.status-failed .execution-task-index {
-  background: rgba(239, 68, 68, 0.14);
-  color: #d54949;
+  background: rgba(166, 61, 42, 0.14);
+  color: #8c3322;
 }
 
 .execution-task-item.status-partial .execution-task-index {
-  background: rgba(245, 158, 11, 0.16);
-  color: #d2831d;
+  background: rgba(162, 115, 44, 0.16);
+  color: #8a6224;
 }
 
 .execution-task-item.status-unfinished .execution-task-index {
@@ -2864,9 +3060,9 @@ onBeforeUnmount(() => {
 }
 
 .execution-task-copy strong {
-  color: #24364d;
+  color: var(--text-primary);
   font-size: 13px;
-  font-weight: 800;
+  font-weight: 600;
   line-height: 1.45;
 }
 
@@ -2882,21 +3078,21 @@ onBeforeUnmount(() => {
   align-items: center;
   padding: 2px 8px;
   border-radius: 999px;
-  background: rgba(91, 108, 255, 0.1);
-  color: #5972b5;
-  font-size: 10px;
-  font-weight: 800;
+  background: rgba(166, 61, 42, 0.1);
+  color: var(--primary-strong);
+  font-size: var(--text-sm);
+  font-weight: 600;
   line-height: 1.4;
 }
 
 .execution-task-subtitle {
-  color: #7a8ca4;
-  font-size: 11px;
+  color: var(--text-secondary);
+  font-size: var(--text-sm);
   line-height: 1.5;
 }
 
 .raw-step-list {
-  border-top: 1px dashed rgba(194, 211, 228, 0.5);
+  border-top: 1px dashed var(--border-light);
   padding-top: 10px;
 }
 
@@ -2908,8 +3104,8 @@ onBeforeUnmount(() => {
 .task-raw-step-block {
   margin-top: 10px;
   border-radius: 14px;
-  background: rgba(246, 250, 255, 0.8);
-  border: 1px solid rgba(203, 217, 234, 0.66);
+  background: rgba(248, 250, 252, 0.8);
+  border: 1px solid var(--border-light);
   overflow: hidden;
 }
 
@@ -2923,15 +3119,15 @@ onBeforeUnmount(() => {
   justify-content: space-between;
   gap: 10px;
   padding: 10px 12px;
-  background: rgba(236, 244, 255, 0.84);
-  border-bottom: 1px solid rgba(203, 217, 234, 0.58);
+  background: rgba(244, 244, 245, 0.84);
+  border-bottom: 1px solid var(--border-light);
 }
 
 .task-tool-tree-header span,
 .task-tool-tree-header small {
-  color: #5f7896;
-  font-size: 11px;
-  font-weight: 800;
+  color: var(--text-secondary);
+  font-size: var(--text-sm);
+  font-weight: 600;
 }
 
 .task-tool-tree-list,
@@ -2950,7 +3146,7 @@ onBeforeUnmount(() => {
   padding: 12px;
   border-radius: 12px;
   background: rgba(255, 255, 255, 0.78);
-  border: 1px solid rgba(207, 220, 236, 0.72);
+  border: 1px solid var(--border-light);
 }
 
 .task-tool-tree-item::before {
@@ -2961,55 +3157,55 @@ onBeforeUnmount(() => {
   width: 10px;
   height: 2px;
   border-radius: 999px;
-  background: rgba(179, 198, 223, 0.82);
+  background: rgba(161, 161, 170, 0.6);
 }
 
 .task-raw-step-toggle {
   width: 100%;
   border: 0;
-  background: rgba(236, 244, 255, 0.84);
-  border-bottom: 1px solid rgba(203, 217, 234, 0.58);
+  background: rgba(244, 244, 245, 0.84);
+  border-bottom: 1px solid var(--border-light);
   padding: 10px 12px;
   display: flex;
   align-items: center;
   justify-content: space-between;
   gap: 10px;
   cursor: pointer;
-  color: #5f7896;
-  font-size: 11px;
-  font-weight: 800;
+  color: var(--text-secondary);
+  font-size: var(--text-sm);
+  font-weight: 600;
 }
 
 .task-raw-step-toggle:hover {
-  background: rgba(230, 240, 255, 0.94);
+  background: rgba(166, 61, 42, 0.06);
 }
 
 .task-raw-step-toggle small {
-  color: #7c90a8;
-  font-size: 11px;
+  color: var(--text-muted);
+  font-size: var(--text-sm);
   font-weight: 700;
 }
 
 .task-raw-step-item {
   background: rgba(255, 255, 255, 0.74);
-  border: 1px solid rgba(207, 220, 236, 0.72);
+  border: 1px solid var(--border-light);
 }
 
 @keyframes executionPulse {
   0% {
     box-shadow:
-      0 0 0 0 rgba(77, 141, 255, 0.26),
-      0 0 0 0 rgba(77, 141, 255, 0.12);
+      0 0 0 0 rgba(166, 61, 42, 0.26),
+      0 0 0 0 rgba(166, 61, 42, 0.12);
   }
   70% {
     box-shadow:
-      0 0 0 8px rgba(77, 141, 255, 0),
-      0 0 0 16px rgba(77, 141, 255, 0);
+      0 0 0 8px rgba(166, 61, 42, 0),
+      0 0 0 16px rgba(166, 61, 42, 0);
   }
   100% {
     box-shadow:
-      0 0 0 0 rgba(77, 141, 255, 0),
-      0 0 0 0 rgba(77, 141, 255, 0);
+      0 0 0 0 rgba(166, 61, 42, 0),
+      0 0 0 0 rgba(166, 61, 42, 0);
   }
 }
 
@@ -3017,20 +3213,20 @@ onBeforeUnmount(() => {
   0% {
     transform: translateY(0);
     box-shadow:
-      0 0 0 0 rgba(34, 197, 94, 0),
-      inset 0 0 0 1px rgba(34, 197, 94, 0);
+      0 0 0 0 rgba(92, 122, 94, 0),
+      inset 0 0 0 1px rgba(92, 122, 94, 0);
   }
   40% {
     transform: translateY(-1px);
     box-shadow:
       0 12px 24px rgba(109, 201, 139, 0.16),
-      inset 0 0 0 1px rgba(34, 197, 94, 0.2);
+      inset 0 0 0 1px rgba(92, 122, 94, 0.2);
   }
   100% {
     transform: translateY(0);
     box-shadow:
-      0 0 0 0 rgba(34, 197, 94, 0),
-      inset 0 0 0 1px rgba(34, 197, 94, 0);
+      0 0 0 0 rgba(92, 122, 94, 0),
+      inset 0 0 0 1px rgba(92, 122, 94, 0);
   }
 }
 
@@ -3067,22 +3263,22 @@ onBeforeUnmount(() => {
 }
 
 .agent-step-title-block strong {
-  color: #24364d;
+  color: var(--text-primary);
   font-size: 13px;
-  font-weight: 800;
+  font-weight: 600;
   line-height: 1.4;
 }
 
 .agent-step-subtitle,
 .agent-step-reason,
 .agent-step-summary {
-  color: #7a8ca4;
-  font-size: 11px;
+  color: var(--text-secondary);
+  font-size: var(--text-sm);
   line-height: 1.5;
 }
 
 .agent-step-summary {
-  color: #4b6078;
+  color: var(--text-primary);
   font-size: 12px;
 }
 
@@ -3102,14 +3298,14 @@ onBeforeUnmount(() => {
 
 .tool-header {
   padding: 12px 14px;
-  border-bottom: 1px solid rgba(30, 200, 165, 0.1);
+  border-bottom: 1px solid var(--border-light);
   font-size: 12px;
-  font-weight: 800;
+  font-weight: 600;
 }
 
 .tool-header small {
   color: var(--text-muted);
-  font-size: 11px;
+  font-size: var(--text-sm);
 }
 
 .tool-list {
@@ -3125,7 +3321,7 @@ onBeforeUnmount(() => {
   gap: 8px;
   padding: 12px 14px;
   border-radius: 14px;
-  background: rgba(255, 255, 255, 0.04);
+  background: rgba(255, 255, 255, 0.6);
   content-visibility: auto;
   contain-intrinsic-size: 120px;
 }
@@ -3139,25 +3335,25 @@ onBeforeUnmount(() => {
 .tool-badge {
   padding: 4px 8px;
   border-radius: 999px;
-  background: rgba(255, 255, 255, 0.08);
+  background: rgba(244, 244, 245, 0.8);
   color: var(--text-secondary);
-  font-size: 10px;
+  font-size: var(--text-sm);
   font-weight: 700;
 }
 
 .tool-badge.success {
-  background: rgba(34, 197, 94, 0.18);
-  color: #dcfce7;
+  background: rgba(92, 122, 94, 0.18);
+  color: #4a684c;
 }
 
 .tool-badge.warning {
-  background: rgba(245, 158, 11, 0.18);
-  color: #fde68a;
+  background: rgba(162, 115, 44, 0.18);
+  color: #8a6224;
 }
 
 .tool-badge.danger {
-  background: rgba(239, 68, 68, 0.18);
-  color: #fecaca;
+  background: rgba(166, 61, 42, 0.18);
+  color: #8c3322;
 }
 
 .tool-summary {
@@ -3173,15 +3369,15 @@ onBeforeUnmount(() => {
 }
 
 .tool-title-block strong {
-  color: #24364d;
+  color: var(--text-primary);
   font-size: 13px;
-  font-weight: 800;
+  font-weight: 600;
   line-height: 1.4;
 }
 
 .tool-subtitle {
-  color: #7a8ca4;
-  font-size: 11px;
+  color: var(--text-secondary);
+  font-size: var(--text-sm);
   font-weight: 700;
   line-height: 1.4;
 }
@@ -3190,10 +3386,10 @@ onBeforeUnmount(() => {
   margin: 0;
   padding: 11px 12px;
   border-radius: 12px;
-  background: rgba(248, 251, 255, 0.98);
-  border: 1px solid rgba(209, 221, 235, 0.7);
-  color: #324a62;
-  font-size: 11px;
+  background: rgba(248, 250, 252, 0.98);
+  border: 1px solid var(--border-light);
+  color: var(--text-primary);
+  font-size: var(--text-sm);
   line-height: 1.6;
   white-space: pre-wrap;
   word-break: break-word;
@@ -3213,15 +3409,15 @@ onBeforeUnmount(() => {
   align-items: center;
   gap: 8px;
   cursor: pointer;
-  background: rgba(244, 248, 253, 0.96);
-  color: #6a7d95;
+  background: rgba(248, 250, 252, 0.96);
+  color: var(--text-secondary);
   font-size: 12px;
   font-weight: 700;
 }
 
 .action-btn.active {
   color: var(--primary-strong);
-  background: rgba(91, 108, 255, 0.12);
+  background: rgba(166, 61, 42, 0.12);
 }
 
 .run-detail-loading {
@@ -3246,20 +3442,20 @@ onBeforeUnmount(() => {
   gap: 6px;
   padding: 12px 14px;
   border-radius: 12px;
-  background: rgba(247, 250, 255, 0.96);
-  border: 1px solid rgba(209, 221, 235, 0.7);
+  background: rgba(248, 250, 252, 0.96);
+  border: 1px solid var(--border-light);
 }
 
 .run-detail-label,
 .run-detail-section-title {
-  color: #7a8ca4;
-  font-size: 11px;
+  color: var(--text-secondary);
+  font-size: var(--text-sm);
   font-weight: 700;
 }
 
 .run-detail-code {
   font-size: 12px;
-  color: #31465f;
+  color: var(--text-primary);
   word-break: break-all;
 }
 
@@ -3274,15 +3470,15 @@ onBeforeUnmount(() => {
   border: 0;
   border-radius: 999px;
   padding: 6px 10px;
-  background: rgba(228, 243, 255, 0.92);
-  color: #4f85c1;
-  font-size: 11px;
+  background: rgba(166, 61, 42, 0.1);
+  color: var(--primary-strong);
+  font-size: var(--text-sm);
   font-weight: 700;
   cursor: pointer;
 }
 
 .mini-copy-btn:hover {
-  background: rgba(217, 237, 255, 0.98);
+  background: rgba(166, 61, 42, 0.18);
 }
 
 .run-detail-section {
@@ -3295,21 +3491,21 @@ onBeforeUnmount(() => {
 .run-detail-answer {
   padding: 14px 16px;
   border-radius: 14px;
-  background: rgba(247, 250, 255, 0.96);
-  border: 1px solid rgba(209, 221, 235, 0.7);
-  color: #31465f;
+  background: rgba(248, 250, 252, 0.96);
+  border: 1px solid var(--border-light);
+  color: var(--text-primary);
   line-height: 1.75;
 }
 
 .run-detail-steps-header {
-  border: 1px solid rgba(194, 211, 228, 0.4);
+  border: 1px solid var(--border-light);
   border-bottom: 0;
   border-radius: 14px 14px 0 0;
   background: rgba(255, 255, 255, 0.9);
 }
 
 .run-detail-step-list {
-  border: 1px solid rgba(194, 211, 228, 0.4);
+  border: 1px solid var(--border-light);
   border-top: 0;
   border-radius: 0 0 14px 14px;
   background: rgba(255, 255, 255, 0.9);
@@ -3317,17 +3513,17 @@ onBeforeUnmount(() => {
 
 .run-detail-current-task {
   border-radius: 14px;
-  border: 1px solid rgba(194, 211, 228, 0.4);
+  border: 1px solid var(--border-light);
 }
 
 .run-detail-progress-strip {
-  border: 1px solid rgba(194, 211, 228, 0.4);
+  border: 1px solid var(--border-light);
   border-top: 0;
 }
 
 .run-detail-task-list {
   border-radius: 14px;
-  border: 1px solid rgba(194, 211, 228, 0.4);
+  border: 1px solid var(--border-light);
   background: rgba(255, 255, 255, 0.9);
 }
 
@@ -3344,7 +3540,7 @@ onBeforeUnmount(() => {
   width: 10px;
   height: 10px;
   border-radius: 50%;
-  background: linear-gradient(135deg, rgba(91, 108, 255, 0.8), rgba(123, 211, 255, 0.7));
+  background: linear-gradient(135deg, #a63d2a, #8c3322);
   animation: jelly-bounce 1000ms var(--spring-bounce, cubic-bezier(0.68, -0.55, 0.265, 1.55)) infinite;
   will-change: transform;
 }
@@ -3374,14 +3570,13 @@ onBeforeUnmount(() => {
   justify-content: center;
   min-width: 104px;
   padding: 10px 14px;
-  border: 1px solid rgba(91, 108, 255, 0.18);
+  border: 1px solid rgba(166, 61, 42, 0.22);
   border-radius: 999px;
   background: rgba(255, 255, 255, 0.96);
-  color: #46658a;
+  color: var(--primary-strong);
   font-size: 12px;
-  font-weight: 800;
-  box-shadow: 0 12px 28px rgba(157, 178, 203, 0.18);
-  backdrop-filter: blur(14px);
+  font-weight: 600;
+  box-shadow: 0 12px 28px rgba(24, 24, 27, 0.08);
   cursor: pointer;
   transition: transform var(--duration-jelly, 400ms) var(--spring-soft, cubic-bezier(0.34, 1.56, 0.64, 1)), box-shadow var(--transition-fast), background var(--transition-fast);
 }
@@ -3389,7 +3584,7 @@ onBeforeUnmount(() => {
 .scroll-to-latest-btn:hover {
   background: #ffffff;
   transform: scale(var(--jelly-hover-scale, 1.03));
-  box-shadow: 0 16px 36px rgba(157, 178, 203, 0.24);
+  box-shadow: 0 16px 36px rgba(166, 61, 42, 0.16);
 }
 
 .scroll-to-latest-btn:active {
@@ -3427,43 +3622,6 @@ onBeforeUnmount(() => {
   100% { transform: rotate(360deg); }
 }
 
-@keyframes glowBreath {
-  0%, 100% {
-    opacity: 0.72;
-    transform: translate(-50%, -50%) scale(0.98);
-  }
-  50% {
-    opacity: 0.94;
-    transform: translate(-50%, -50%) scale(1.06);
-  }
-}
-
-@keyframes iconAura {
-  0%, 100% {
-    opacity: 0.88;
-    filter:
-      drop-shadow(0 0 10px rgba(255, 255, 255, 0.4))
-      drop-shadow(0 0 22px rgba(115, 130, 255, 0.3))
-      drop-shadow(0 0 42px rgba(115, 130, 255, 0.22));
-  }
-  50% {
-    opacity: 1;
-    filter:
-      drop-shadow(0 0 12px rgba(255, 255, 255, 0.56))
-      drop-shadow(0 0 28px rgba(115, 130, 255, 0.42))
-      drop-shadow(0 0 52px rgba(115, 130, 255, 0.3));
-  }
-}
-
-@keyframes float {
-  0%, 100% {
-    transform: translateY(0);
-  }
-  50% {
-    transform: translateY(-8px);
-  }
-}
-
 .fade-slide-enter-active,
 .fade-slide-leave-active {
   transition: opacity 160ms ease, transform 160ms ease;
@@ -3475,11 +3633,13 @@ onBeforeUnmount(() => {
   transform: translateY(6px);
 }
 
-.animate-float {
-  animation: float 3s ease-in-out infinite;
+@media (max-width: 1320px) {
+  .toolbar-desc {
+    display: none;
+  }
 }
 
-@media (max-width: 1100px) {
+@media (max-width: 900px) {
   .chat-page,
   .chat-shell {
     overflow: visible;
@@ -3540,7 +3700,6 @@ onBeforeUnmount(() => {
     width: 100%;
   }
 
-  .reference-top,
   .setting-inline {
     flex-direction: column;
     align-items: flex-start;

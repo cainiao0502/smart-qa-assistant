@@ -1,15 +1,9 @@
 <template>
-  <aside class="sidebar glass-panel" :class="{ collapsed }">
+  <aside class="sidebar" :class="{ collapsed }">
     <div class="sidebar-header">
       <div class="brand" :class="{ centered: collapsed }">
-        <div class="brand-mark">
-          <svg width="22" height="22" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
-            <path d="M12 2L2 7L12 12L22 7L12 2Z" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
-            <path d="M2 17L12 22L22 17" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
-            <path d="M2 12L12 17L22 12" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
-          </svg>
-        </div>
-        <div v-if="!collapsed" class="brand-copy">
+        <div class="brand-mark" aria-hidden="true">问</div>
+        <div v-show="!collapsed" class="brand-copy">
           <span class="brand-title">智能问答 Ragent</span>
           <span class="brand-subtitle">Knowledge Assistant Workspace</span>
         </div>
@@ -28,13 +22,13 @@
 
     <button class="new-chat-btn" :class="{ compact: collapsed }" type="button" @click="createNewChat">
       <el-icon><Plus /></el-icon>
-      <span v-if="!collapsed">新建对话</span>
+      <span v-show="!collapsed">新建对话</span>
     </button>
 
     <nav class="nav-block">
-      <span v-if="!collapsed" class="section-label">工作区导航</span>
+      <span v-show="!collapsed" class="section-label">工作区导航</span>
       <router-link
-        v-for="item in navItems"
+        v-for="item in visibleNavItems"
         :key="item.path"
         :to="item.path"
         class="nav-item"
@@ -44,14 +38,14 @@
         <div class="nav-item-icon">
           <el-icon><component :is="item.icon" /></el-icon>
         </div>
-        <div v-if="!collapsed" class="nav-item-copy">
+        <div v-show="!collapsed" class="nav-item-copy">
           <span class="nav-item-title">{{ item.label }}</span>
           <span class="nav-item-desc">{{ item.description }}</span>
         </div>
       </router-link>
     </nav>
 
-    <section v-if="!collapsed" class="history-block">
+    <section v-show="!collapsed" class="history-block">
       <div class="history-header">
         <div>
           <span class="section-label">最近会话</span>
@@ -73,24 +67,20 @@
           :key="session.id"
           class="history-item"
           :class="{ active: currentSessionId === session.id }"
+          :title="session.kbName ? `${session.kbName} · ${session.title}` : session.title"
           @click="selectSession(session.id)"
         >
-          <div class="history-item-top">
-            <span class="history-title">{{ session.title }}</span>
-            <span class="history-time">{{ formatTime(session.updatedAt) }}</span>
-          </div>
-          <span class="history-preview">{{ session.preview || '继续查看这段对话内容' }}</span>
-          <div class="history-item-footer">
-            <span v-if="session.kbName" class="history-tag">{{ session.kbName }}</span>
-            <button
-              type="button"
-              class="history-delete-btn"
-              title="删除会话"
-              @click.stop="handleDeleteSession(session.id)"
-            >
-              <el-icon><Delete /></el-icon>
-            </button>
-          </div>
+          <span v-if="session.kbName" class="history-dot" aria-hidden="true"></span>
+          <span class="history-title">{{ session.title }}</span>
+          <span class="history-time">{{ formatTime(session.updatedAt) }}</span>
+          <button
+            type="button"
+            class="history-delete-btn"
+            title="删除会话"
+            @click.stop="handleDeleteSession(session.id)"
+          >
+            <el-icon><Delete /></el-icon>
+          </button>
         </div>
       </div>
 
@@ -104,15 +94,24 @@
     </section>
 
     <div class="sidebar-footer" :class="{ compact: collapsed }">
-      <div class="footer-card">
+      <router-link to="/profile" class="footer-card" :title="collapsed ? currentUser?.username : ''">
         <div class="footer-avatar">
-          <el-icon><User /></el-icon>
+          {{ currentUser ? currentUser.username.charAt(0).toUpperCase() : 'U' }}
         </div>
-        <div v-if="!collapsed" class="footer-copy">
-          <span class="footer-name">当前工作区</span>
-          <span class="footer-role">轻量 RAG 助手界面</span>
+        <div v-show="!collapsed" class="footer-copy">
+          <span class="footer-name">{{ currentUser?.username || '未登录' }}</span>
+          <span class="footer-role">{{ currentUser?.role === 'admin' ? '管理员' : '普通用户' }}</span>
         </div>
-      </div>
+      </router-link>
+      <button
+        v-show="!collapsed"
+        class="logout-link"
+        type="button"
+        @click="handleLogout"
+        title="退出登录"
+      >
+        退出登录
+      </button>
     </div>
   </aside>
 </template>
@@ -121,8 +120,9 @@
 import { computed, onMounted, onUnmounted, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import { ChatLineSquare, Connection, Delete, Expand, Fold, Folder, Plus, Reading, User } from '@element-plus/icons-vue'
-import { chatApi } from '@/api'
+import { ChatLineSquare, Connection, Delete, Expand, Fold, Folder, Plus, Reading } from '@element-plus/icons-vue'
+import { chatApi, authApi } from '@/api'
+import { tokenStore } from '@/utils/auth'
 import { clearRecentSessions, listRecentSessions, removeRecentSession, subscribeRecentSessions } from '@/utils/chatSessions'
 defineProps({
   collapsed: {
@@ -136,6 +136,7 @@ defineEmits(['toggle'])
 const route = useRoute()
 const router = useRouter()
 const recentSessions = ref([])
+const currentUser = ref(tokenStore.getUser())
 const navItems = [
   {
     path: '/',
@@ -144,24 +145,19 @@ const navItems = [
     icon: ChatLineSquare
   },
   {
-    path: '/kb',
-    label: '知识库管理',
-    description: '查看库、文档与统计信息',
+    path: '/manage',
+    label: '管理中心',
+    description: '知识库、MCP 与 Skill',
     icon: Folder
-  },
-  {
-    path: '/mcp',
-    label: 'MCP 管理',
-    description: '查看服务、工具和连接状态',
-    icon: Connection
-  },
-  {
-    path: '/skills',
-    label: 'Skill 管理',
-    description: '查看本地 SKILL.md 与重载状态',
-    icon: Reading
   }
 ]
+
+// 平台级管理入口（MCP / Skill）仅管理员可见；后端接口有 admin 校验兜底，
+// 此处隐藏菜单只是体验层，真正的权限墙在服务端
+const visibleNavItems = computed(() => {
+  const role = currentUser.value?.role
+  return navItems.filter(item => !item.adminOnly || role === 'admin')
+})
 
 const currentSessionId = computed(() => {
   return typeof route.query.session === 'string' ? route.query.session : ''
@@ -248,8 +244,32 @@ const formatTime = (value) => {
 
 let unsubscribe = null
 
+async function refreshCurrentUser() {
+  try {
+    const result = await authApi.me()
+    currentUser.value = result.data || null
+    if (result.data) {
+      tokenStore.setUser(result.data)
+    }
+  } catch {
+    currentUser.value = null
+  }
+}
+
+async function handleLogout() {
+  try {
+    await authApi.logout()
+  } catch {
+    // 忽略服务端错误
+  }
+  tokenStore.clear()
+  currentUser.value = null
+  router.push('/login')
+}
+
 onMounted(() => {
   refreshSessions()
+  refreshCurrentUser()
   unsubscribe = subscribeRecentSessions(refreshSessions)
 })
 
@@ -269,26 +289,20 @@ onUnmounted(() => {
   width: var(--sidebar-width);
   height: calc(100dvh - (var(--shell-gap) * 2));
   min-height: 0;
-  border-radius: 28px;
-  padding: 14px;
+  border-radius: 0;
+  padding: 14px 14px 14px 4px;
   display: flex;
   flex-direction: column;
-  overflow: auto;
+  overflow: hidden;
   overscroll-behavior: contain;
-  background:
-    linear-gradient(180deg, rgba(255, 255, 255, 0.94) 0%, rgba(246, 250, 255, 0.98) 100%);
-  border: 1px solid rgba(198, 212, 230, 0.55);
-  box-shadow:
-    inset 0 1px 0 rgba(255, 255, 255, 0.92),
-    0 20px 44px rgba(164, 183, 210, 0.16);
-  transition:
-    width var(--duration-bounce, 600ms) var(--spring-snappy, cubic-bezier(0.22, 1.2, 0.36, 1)),
-    padding var(--duration-bounce, 600ms) var(--spring-snappy, cubic-bezier(0.22, 1.2, 0.36, 1)),
-    box-shadow var(--transition-fast);
+  contain: layout style paint;
+  /* 桌面延伸：透明底融入 app 米色背景，仅以发丝线与工作区分隔 */
+  background: transparent;
+  border-right: 1px solid var(--border-light);
 }
 
 .sidebar.collapsed {
-  width: 84px;
+  /* width 由 GSAP 控制，CSS 不再硬切 */
   padding: 14px 10px;
 }
 
@@ -310,21 +324,20 @@ onUnmounted(() => {
   justify-content: center;
 }
 
+/* 墨方印：浓墨底 + 宋体「问」+ 纸色内框，静态无动画 */
 .brand-mark {
   width: 42px;
   height: 42px;
-  border-radius: 16px;
+  border-radius: var(--radius-sm, 10px);
   display: grid;
   place-items: center;
-  color: #fff;
-  background: linear-gradient(135deg, #8ccfff, #7e8fff);
-  box-shadow: 0 12px 24px rgba(141, 166, 210, 0.22);
+  color: var(--text-inverse, #f9f4ea);
+  background: var(--text-primary, #2e2a23);
+  font-family: var(--font-serif, serif);
+  font-size: 20px;
+  font-weight: 600;
+  box-shadow: inset 0 0 0 2px rgba(249, 244, 234, 0.28), var(--shadow-xs);
   flex-shrink: 0;
-  animation: breathe var(--duration-breathe, 4s) ease-in-out infinite;
-}
-
-.brand-mark:hover {
-  animation-play-state: paused;
 }
 
 .brand-copy {
@@ -335,23 +348,23 @@ onUnmounted(() => {
 }
 
 .brand-title {
-  color: #24364d;
+  color: var(--text-primary);
   font-size: 14px;
-  font-weight: 800;
+  font-weight: 600;
 }
 
 .brand-subtitle {
-  color: #8293a8;
-  font-size: 10px;
+  color: var(--text-secondary);
+  font-size: 11px;
 }
 
 .collapse-btn {
   width: 34px;
   height: 34px;
-  border: 1px solid rgba(201, 215, 233, 0.7);
+  border: 1px solid var(--border-light);
   border-radius: 12px;
   background: rgba(255, 255, 255, 0.86);
-  color: #607792;
+  color: var(--text-secondary);
   display: grid;
   place-items: center;
   cursor: pointer;
@@ -361,7 +374,7 @@ onUnmounted(() => {
 
 .collapse-btn:hover {
   background: #ffffff;
-  color: #3e5875;
+  color: var(--text-primary);
   transform: scale(var(--jelly-hover-scale, 1.03));
 }
 
@@ -377,10 +390,10 @@ onUnmounted(() => {
   width: 100%;
   min-height: 42px;
   margin-top: 14px;
-  border: 1px solid rgba(192, 209, 229, 0.68);
-  border-radius: 16px;
-  background: linear-gradient(135deg, rgba(236, 245, 255, 0.96), rgba(223, 237, 255, 0.94));
-  color: #325a86;
+  border: 1px solid rgba(166, 61, 42, 0.32);
+  border-radius: var(--radius-pill);
+  background: var(--primary-color);
+  color: #ffffff;
   font-weight: 700;
   cursor: pointer;
   transition: transform var(--duration-jelly, 400ms) var(--spring-soft, cubic-bezier(0.34, 1.56, 0.64, 1)), background var(--transition-fast), box-shadow var(--transition-fast);
@@ -388,8 +401,8 @@ onUnmounted(() => {
 
 .new-chat-btn:hover {
   transform: scale(var(--jelly-hover-scale, 1.03));
-  background: linear-gradient(135deg, rgba(240, 247, 255, 1), rgba(229, 241, 255, 0.98));
-  box-shadow: 0 14px 24px rgba(176, 196, 222, 0.18);
+  background: var(--primary-strong);
+  box-shadow: 0 14px 24px rgba(166, 61, 42, 0.24);
 }
 
 .new-chat-btn:active {
@@ -408,9 +421,9 @@ onUnmounted(() => {
 
 .section-label {
   display: inline-block;
-  color: #99a8b8;
+  color: var(--text-muted);
   font-size: 11px;
-  font-weight: 800;
+  font-weight: 600;
   letter-spacing: 0.12em;
   text-transform: uppercase;
   margin-bottom: 12px;
@@ -422,6 +435,7 @@ onUnmounted(() => {
 }
 
 .nav-item {
+  position: relative;
   display: flex;
   align-items: center;
   gap: 12px;
@@ -438,7 +452,7 @@ onUnmounted(() => {
 }
 
 .nav-item:hover {
-  background: rgba(234, 242, 251, 0.88);
+  background: rgba(166, 61, 42, 0.06);
   transform: scale(1.02) translateX(2px);
 }
 
@@ -447,9 +461,21 @@ onUnmounted(() => {
 }
 
 .nav-item.active {
-  background: linear-gradient(135deg, rgba(225, 238, 255, 0.98), rgba(239, 246, 255, 0.96));
-  border-color: rgba(179, 203, 230, 0.62);
+  background: linear-gradient(135deg, rgba(166, 61, 42, 0.12), rgba(166, 61, 42, 0.04));
+  border-color: rgba(166, 61, 42, 0.2);
   box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.42);
+}
+
+.nav-item.active::before {
+  content: '';
+  position: absolute;
+  left: 0;
+  top: 50%;
+  transform: translateY(-50%);
+  width: 3px;
+  height: 60%;
+  border-radius: 0 3px 3px 0;
+  background: var(--primary-color);
 }
 
 .nav-item-icon {
@@ -458,14 +484,14 @@ onUnmounted(() => {
   border-radius: 12px;
   display: grid;
   place-items: center;
-  background: rgba(233, 241, 251, 0.96);
-  color: #6280a0;
+  background: rgba(244, 244, 245, 0.96);
+  color: var(--text-secondary);
   flex-shrink: 0;
 }
 
 .nav-item.active .nav-item-icon {
-  background: linear-gradient(135deg, #bfe4ff, #b9d4ff);
-  color: #325b89;
+  background: var(--primary-color);
+  color: #ffffff;
 }
 
 .nav-item-copy {
@@ -475,19 +501,27 @@ onUnmounted(() => {
 }
 
 .nav-item-title {
-  color: #24364d;
+  color: var(--text-primary);
   font-size: 13px;
   font-weight: 700;
 }
 
 .nav-item-desc {
-  color: #8697aa;
+  color: var(--text-muted);
   font-size: 11px;
 }
 
 .history-block {
   display: flex;
   flex-direction: column;
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  scrollbar-width: thin;
+}
+
+.history-block::-webkit-scrollbar {
+  width: 5px;
 }
 
 .history-header {
@@ -499,120 +533,120 @@ onUnmounted(() => {
 }
 
 .history-caption {
-  color: #98a7b8;
+  color: var(--text-muted);
   font-size: 12px;
 }
 
 .clear-btn {
   border: 0;
   background: transparent;
-  color: #8093a8;
+  color: var(--text-secondary);
   font-size: 12px;
   font-weight: 700;
   cursor: pointer;
 }
 
-.history-list {
-  overflow: visible;
-  display: flex;
-  flex-direction: column;
-  gap: 10px;
-  padding-right: 2px;
+.clear-btn:hover {
+  color: var(--danger-color);
 }
 
-.history-item {
+.history-list {
   display: flex;
   flex-direction: column;
-  align-items: stretch;
+  gap: 2px;
+  padding-right: 4px;
+}
+
+/* 紧凑单行制：标题一行 + 右侧时间，悬停才现删除按钮（一屏可容纳十余条） */
+.history-item {
+  position: relative;
+  display: flex;
+  align-items: center;
   gap: 8px;
   width: 100%;
-  border: 1px solid rgba(227, 236, 246, 0.9);
-  border-radius: 16px;
-  background: rgba(255, 255, 255, 0.88);
-  padding: 12px;
+  min-height: 34px;
+  padding: 7px 10px;
+  border: 1px solid transparent;
+  border-radius: var(--radius-sm);
+  background: transparent;
   cursor: pointer;
   text-align: left;
-  transition: background var(--transition-fast), border-color var(--transition-fast), transform var(--duration-jelly, 400ms) var(--spring-soft, cubic-bezier(0.34, 1.56, 0.64, 1)), box-shadow var(--transition-fast);
+  transition: background var(--transition-fast);
 }
 
 .history-item:hover {
-  background: rgba(255, 255, 255, 0.98);
-  transform: scale(1.02);
-  box-shadow: 0 10px 18px rgba(181, 198, 221, 0.12);
+  background: rgba(72, 60, 42, 0.06);
 }
 
 .history-item:active {
-  transform: scaleX(1.03) scaleY(0.97);
+  background: rgba(72, 60, 42, 0.1);
 }
 
 .history-item.active {
-  background: linear-gradient(135deg, rgba(235, 244, 255, 0.98), rgba(246, 250, 255, 0.98));
-  border-color: rgba(180, 203, 230, 0.72);
+  background: var(--primary-soft);
 }
 
-.history-item-top {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 12px;
+.history-item.active::before {
+  content: '';
+  position: absolute;
+  left: 0;
+  top: 22%;
+  bottom: 22%;
+  width: 3px;
+  border-radius: 0 2px 2px 0;
+  background: var(--primary-color);
+}
+
+.history-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--primary-color);
+  flex-shrink: 0;
 }
 
 .history-title {
-  color: #24364d;
-  font-size: 13px;
-  font-weight: 700;
+  flex: 1;
+  min-width: 0;
+  color: var(--text-primary);
+  font-size: var(--text-base);
+  font-weight: var(--weight-medium);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
-.history-time,
-.history-preview {
-  color: #8798aa;
-  font-size: 12px;
+.history-item.active .history-title {
+  color: var(--primary-strong);
 }
 
 .history-time {
+  color: var(--text-muted);
+  font-size: var(--text-xs);
   white-space: nowrap;
   flex-shrink: 0;
+  transition: opacity var(--transition-fast);
 }
 
-.history-preview {
-  line-height: 1.5;
-  display: -webkit-box;
-  -webkit-line-clamp: 2;
-  -webkit-box-orient: vertical;
-  overflow: hidden;
-}
-
-.history-tag {
-  align-self: flex-start;
-  padding: 4px 10px;
-  border-radius: var(--radius-pill);
-  background: rgba(228, 240, 255, 0.96);
-  color: #5f7ea2;
-  font-size: 11px;
-  font-weight: 700;
-}
-
-.history-item-footer {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 8px;
+/* 悬停时时间让位给删除按钮，避免重叠 */
+.history-item:hover .history-time {
+  opacity: 0;
 }
 
 .history-delete-btn {
+  position: absolute;
+  right: 6px;
+  top: 50%;
+  transform: translateY(-50%);
   width: 26px;
   height: 26px;
   border: 0;
-  border-radius: 8px;
+  border-radius: var(--radius-xs);
   background: transparent;
-  color: #a0aec0;
+  color: var(--text-muted);
   display: grid;
   place-items: center;
   cursor: pointer;
-  flex-shrink: 0;
   opacity: 0;
   transition: opacity var(--transition-fast), background var(--transition-fast), color var(--transition-fast);
 }
@@ -622,8 +656,8 @@ onUnmounted(() => {
 }
 
 .history-delete-btn:hover {
-  background: rgba(255, 200, 200, 0.92);
-  color: #e53e3e;
+  background: var(--danger-soft);
+  color: var(--danger-color);
 }
 
 .history-empty {
@@ -632,7 +666,7 @@ onUnmounted(() => {
   place-items: center;
   text-align: center;
   padding: 12px;
-  color: #8d9daf;
+  color: var(--text-secondary);
 }
 
 .history-empty-icon {
@@ -642,13 +676,13 @@ onUnmounted(() => {
   border-radius: 18px;
   display: grid;
   place-items: center;
-  background: rgba(235, 242, 250, 0.96);
-  color: #6887a7;
+  background: rgba(166, 61, 42, 0.08);
+  color: var(--primary-strong);
 }
 
 .history-empty h3 {
   font-size: 15px;
-  color: #24364d;
+  color: var(--text-primary);
   margin-bottom: 8px;
 }
 
@@ -658,6 +692,7 @@ onUnmounted(() => {
 }
 
 .sidebar-footer {
+  margin-top: auto;
   padding-top: 16px;
 }
 
@@ -671,8 +706,38 @@ onUnmounted(() => {
   gap: 12px;
   border-radius: 16px;
   background: rgba(255, 255, 255, 0.9);
-  border: 1px solid rgba(225, 236, 246, 0.88);
+  border: 1px solid var(--border-light);
   padding: 12px;
+  text-decoration: none;
+  color: inherit;
+  transition: background var(--transition-fast), border-color var(--transition-fast), transform var(--duration-jelly, 400ms) var(--spring-soft, cubic-bezier(0.34, 1.56, 0.64, 1));
+}
+
+.footer-card:hover {
+  background: rgba(255, 255, 255, 0.98);
+  border-color: rgba(166, 61, 42, 0.2);
+  transform: translateY(-1px);
+}
+
+.logout-link {
+  display: block;
+  width: 100%;
+  margin-top: 8px;
+  padding: 8px 12px;
+  border: 1px solid rgba(166, 61, 42, 0.2);
+  border-radius: 12px;
+  background: var(--danger-soft);
+  color: var(--danger-color);
+  font-size: 12px;
+  font-weight: 600;
+  font-family: inherit;
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+.logout-link:hover {
+  background: rgba(166, 61, 42, 0.15);
+  border-color: rgba(166, 61, 42, 0.3);
 }
 
 .sidebar-footer.compact .footer-card {
@@ -683,11 +748,14 @@ onUnmounted(() => {
 .footer-avatar {
   width: 36px;
   height: 36px;
-  border-radius: 12px;
+  border-radius: 50%;
   display: grid;
   place-items: center;
-  background: linear-gradient(135deg, rgba(224, 238, 255, 0.98), rgba(213, 231, 255, 0.98));
-  color: #6080a3;
+  background: linear-gradient(135deg, var(--primary-color), var(--primary-strong));
+  color: #ffffff;
+  font-size: 14px;
+  font-weight: 700;
+  flex-shrink: 0;
 }
 
 .footer-copy {
@@ -696,17 +764,17 @@ onUnmounted(() => {
 }
 
 .footer-name {
-  color: #24364d;
+  color: var(--text-primary);
   font-size: 12px;
   font-weight: 700;
 }
 
 .footer-role {
-  color: #8b9caf;
+  color: var(--text-secondary);
   font-size: 11px;
 }
 
-@media (max-width: 1100px) {
+@media (max-width: 900px) {
   .sidebar,
   .sidebar.collapsed {
     position: relative;
@@ -714,7 +782,8 @@ onUnmounted(() => {
     left: 0;
     width: 100%;
     height: auto;
-    max-height: none;
+    /* 堆叠时限制侧栏高度，保证主内容区可见、可操作 */
+    max-height: 52dvh;
   }
 
   .history-block {

@@ -1,7 +1,7 @@
 <template>
-  <div class="app-shell">
-    <Sidebar :collapsed="sidebarCollapsed" @toggle="toggleSidebar" />
-    <main class="app-main" :class="{ collapsed: sidebarCollapsed }">
+  <div class="app-shell" :class="{ 'is-auth': isAuthLayout }">
+    <Sidebar v-if="!isAuthLayout" ref="sidebarRef" :collapsed="sidebarCollapsed" @toggle="toggleSidebar" />
+    <main ref="mainRef" class="app-main" :class="{ collapsed: sidebarCollapsed, 'is-auth': isAuthLayout }">
       <router-view v-slot="{ Component }">
         <transition name="shell-fade" mode="out-in">
           <component :is="Component" />
@@ -12,20 +12,77 @@
 </template>
 
 <script setup>
-import { onMounted, ref, watch } from 'vue'
+import { computed, nextTick, onMounted, ref, watch } from 'vue'
+import { useRoute } from 'vue-router'
+import gsap from 'gsap'
 import Sidebar from '@/components/Sidebar.vue'
+
+const route = useRoute()
+const isAuthLayout = computed(() => Boolean(route.meta?.public))
 
 const SIDEBAR_STORAGE_KEY = 'miniagent.sidebar.collapsed'
 const sidebarCollapsed = ref(false)
+const sidebarRef = ref(null)
+const mainRef = ref(null)
+let collapseTween = null
 
-const toggleSidebar = () => {
+/* 与 main.css 的 --sidebar-width / --shell-gap 严格同源（P0 修复：原 260/16 与 CSS 248/12 不一致，
+   导致首次折叠动画后主区 margin-left 跳 16px） */
+const SIDEBAR_EXPANDED_WIDTH = 248
+const SIDEBAR_COLLAPSED_WIDTH = 84
+const SHELL_GAP = 12
+const COLLAPSE_DURATION = 0.28
+
+function toggleSidebar() {
   sidebarCollapsed.value = !sidebarCollapsed.value
+}
+
+function animateCollapse(collapsed) {
+  if (collapseTween) {
+    collapseTween.kill()
+    collapseTween = null
+  }
+
+  const sidebarEl = sidebarRef.value?.$el
+  const mainEl = mainRef.value
+  if (!sidebarEl || !mainEl) return
+
+  const fromWidth = collapsed ? SIDEBAR_EXPANDED_WIDTH : SIDEBAR_COLLAPSED_WIDTH
+  const toWidth = collapsed ? SIDEBAR_COLLAPSED_WIDTH : SIDEBAR_EXPANDED_WIDTH
+  const fromMargin = collapsed
+    ? SIDEBAR_EXPANDED_WIDTH + SHELL_GAP
+    : SIDEBAR_COLLAPSED_WIDTH + SHELL_GAP
+  const toMargin = collapsed
+    ? SIDEBAR_COLLAPSED_WIDTH + SHELL_GAP
+    : SIDEBAR_EXPANDED_WIDTH + SHELL_GAP
+
+  sidebarEl.style.willChange = 'width'
+  mainEl.style.willChange = 'margin-left'
+
+  collapseTween = gsap.timeline({
+    onComplete() {
+      sidebarEl.style.willChange = ''
+      mainEl.style.willChange = ''
+      collapseTween = null
+    }
+  })
+
+  collapseTween.to(sidebarEl, {
+    width: toWidth,
+    duration: COLLAPSE_DURATION,
+    ease: 'power2.out'
+  }, 0)
+
+  collapseTween.to(mainEl, {
+    marginLeft: toMargin,
+    duration: COLLAPSE_DURATION,
+    ease: 'power2.out'
+  }, 0)
 }
 
 onMounted(() => {
   sidebarCollapsed.value = window.localStorage.getItem(SIDEBAR_STORAGE_KEY) === 'true'
-  
-  // Performance detection - add reduced-animation class for low-perf devices
+
   const isLowPerf = navigator.hardwareConcurrency && navigator.hardwareConcurrency < 4
   const prefersReduced = window.matchMedia('(prefers-reduced-motion: reduce)').matches
   if (isLowPerf || prefersReduced) {
@@ -35,6 +92,7 @@ onMounted(() => {
 
 watch(sidebarCollapsed, (value) => {
   window.localStorage.setItem(SIDEBAR_STORAGE_KEY, String(value))
+  nextTick(() => animateCollapse(value))
 })
 </script>
 
@@ -54,12 +112,11 @@ watch(sidebarCollapsed, (value) => {
   position: absolute;
   inset: 0;
   z-index: 0;
-  background: 
-    radial-gradient(circle at 20% 20%, rgba(123, 211, 255, 0.15), transparent 40%),
-    radial-gradient(circle at 80% 30%, rgba(91, 108, 255, 0.12), transparent 35%),
-    radial-gradient(circle at 50% 80%, rgba(163, 130, 255, 0.1), transparent 40%);
-  background-size: 400% 400%;
-  animation: liquid-flow var(--duration-liquid, 20s) ease-in-out infinite;
+  /* 淡墨晕染：静态氛围层（宣纸墨韵 §4.1），替代原常驻呼吸动画 */
+  background:
+    radial-gradient(56rem 36rem at 10% -6%, rgba(120, 108, 84, 0.07), transparent 55%),
+    radial-gradient(48rem 32rem at 96% 4%, rgba(166, 61, 42, 0.04), transparent 50%),
+    radial-gradient(60rem 40rem at 50% 108%, rgba(120, 108, 84, 0.06), transparent 60%);
   pointer-events: none;
 }
 
@@ -73,11 +130,22 @@ watch(sidebarCollapsed, (value) => {
   min-height: 0;
   overflow: hidden;
   border-radius: var(--radius-xl);
-  transition: margin-left var(--transition-normal);
+  contain: layout style;
 }
 
 .app-main.collapsed {
-  margin-left: calc(84px + var(--shell-gap));
+  /* margin-left 由 GSAP 控制，CSS 不再硬切 */
+}
+
+.app-shell.is-auth {
+  padding: 0;
+  gap: 0;
+}
+
+.app-main.is-auth {
+  margin-left: 0;
+  height: 100dvh;
+  border-radius: 0;
 }
 
 .shell-fade-enter-active,
@@ -97,13 +165,7 @@ watch(sidebarCollapsed, (value) => {
   transform: translateY(-6px) scale(0.99);
 }
 
-@media (prefers-reduced-motion: reduce) {
-  .app-shell::before {
-    animation: none;
-  }
-}
-
-@media (max-width: 1100px) {
+@media (max-width: 900px) {
   .app-shell {
     flex-direction: column;
     height: auto;

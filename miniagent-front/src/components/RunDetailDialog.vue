@@ -37,7 +37,7 @@
 
       <div class="run-detail-section">
         <span class="run-detail-section-title">用户目标</span>
-        <div class="run-detail-text">{{ detail.userGoal || '—' }}</div>
+        <div class="run-detail-text">{{ detail.userGoal || '-' }}</div>
       </div>
 
       <div class="run-detail-section">

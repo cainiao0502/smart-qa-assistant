@@ -278,13 +278,13 @@ const filteredDocuments = computed(() => {
 
 function getFileIconStyle(fileType) {
   const palette = {
-    pdf: { background: 'rgba(244, 95, 122, 0.12)', color: '#f45f7a' },
-    txt: { background: 'rgba(77, 141, 255, 0.12)', color: '#4d8dff' },
-    md: { background: 'rgba(30, 200, 165, 0.12)', color: '#119b7f' },
-    doc: { background: 'rgba(91, 108, 255, 0.12)', color: '#4456f6' },
-    docx: { background: 'rgba(91, 108, 255, 0.12)', color: '#4456f6' }
+    pdf: { background: 'var(--danger-soft)', color: 'var(--danger-color)' },
+    txt: { background: 'rgba(166, 61, 42, 0.12)', color: '#8c3322' },
+    md: { background: 'rgba(166, 61, 42, 0.12)', color: '#8c3322' },
+    doc: { background: 'rgba(5, 150, 105, 0.12)', color: '#8c3322' },
+    docx: { background: 'rgba(5, 150, 105, 0.12)', color: '#8c3322' }
   }
-  return palette[fileType?.toLowerCase()] || { background: 'rgba(17, 24, 39, 0.06)', color: '#52607a' }
+  return palette[fileType?.toLowerCase()] || { background: 'rgba(24, 24, 27, 0.06)', color: '#52607a' }
 }
 
 function getStatusClass(status) {
@@ -550,12 +550,10 @@ onMounted(async () => {
   gap: 18px;
   padding: 24px 28px;
   background:
-    linear-gradient(180deg, rgba(255, 255, 255, 0.96), rgba(243, 248, 255, 0.96)),
-    radial-gradient(circle at top left, rgba(123, 211, 255, 0.14), transparent 34%);
-  border: 1px solid rgba(194, 211, 229, 0.44);
-  box-shadow:
-    inset 0 1px 0 rgba(255, 255, 255, 0.86),
-    0 16px 34px rgba(163, 183, 209, 0.14);
+    linear-gradient(180deg, rgba(255, 255, 255, 0.96), rgba(248, 250, 252, 0.96)),
+    radial-gradient(circle at top left, rgba(166, 61, 42, 0.12), transparent 34%);
+  border: 1px solid var(--border-light);
+  box-shadow: var(--shadow-xs);
 }
 
 .doc-hero-left {
@@ -567,7 +565,7 @@ onMounted(async () => {
 .back-btn {
   width: 46px;
   height: 46px;
-  border: 1px solid rgba(201, 215, 233, 0.7);
+  border: 1px solid var(--border-light);
   border-radius: 16px;
   background: rgba(255, 255, 255, 0.9);
   color: var(--text-primary);
@@ -582,7 +580,7 @@ onMounted(async () => {
 
 .back-btn:hover {
   background: #ffffff;
-  border-color: rgba(91, 108, 255, 0.24);
+  border-color: rgba(166, 61, 42, 0.24);
   transform: translateY(-1px);
 }
 
@@ -608,7 +606,7 @@ onMounted(async () => {
 .doc-hero-actions :deep(.el-button) {
   min-height: 48px;
   padding-inline: 20px;
-  box-shadow: 0 12px 24px rgba(160, 182, 210, 0.16);
+  box-shadow: var(--shadow-sm);
 }
 
 .upload-zone {
@@ -617,21 +615,19 @@ onMounted(async () => {
   justify-content: space-between;
   gap: 16px;
   padding: 24px 28px;
-  border: 1.5px dashed rgba(91, 108, 255, 0.24);
+  border: 1.5px dashed rgba(166, 61, 42, 0.28);
   background:
-    linear-gradient(135deg, rgba(232, 241, 255, 0.92), rgba(244, 249, 255, 0.98)),
+    linear-gradient(135deg, rgba(166, 61, 42, 0.06), rgba(166, 61, 42, 0.02)),
     rgba(255, 255, 255, 0.94);
   cursor: pointer;
   transition: transform var(--transition-fast), box-shadow var(--transition-fast), border-color var(--transition-fast);
-  box-shadow:
-    inset 0 1px 0 rgba(255, 255, 255, 0.82),
-    0 12px 26px rgba(165, 185, 210, 0.1);
+  box-shadow: var(--shadow-xs);
 }
 
 .upload-zone:hover,
 .upload-zone.dragging {
   transform: translateY(-2px);
-  border-color: rgba(91, 108, 255, 0.42);
+  border-color: rgba(166, 61, 42, 0.5);
   box-shadow: var(--shadow-glow-soft);
 }
 
@@ -647,10 +643,10 @@ onMounted(async () => {
   border-radius: 22px;
   display: grid;
   place-items: center;
-  background: linear-gradient(135deg, rgba(218, 235, 255, 0.98), rgba(235, 244, 255, 0.98));
+  background: linear-gradient(135deg, rgba(166, 61, 42, 0.14), rgba(166, 61, 42, 0.06));
   color: var(--primary-strong);
   font-size: 28px;
-  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.72);
+  box-shadow: var(--shadow-xs);
 }
 
 .upload-zone h2 {
@@ -676,7 +672,7 @@ onMounted(async () => {
   border: 1px solid rgba(201, 217, 235, 0.52);
   color: var(--text-secondary);
   font-size: 12px;
-  font-weight: 800;
+  font-weight: 600;
 }
 
 .doc-table-panel {
@@ -686,9 +682,7 @@ onMounted(async () => {
   background:
     linear-gradient(180deg, rgba(255, 255, 255, 0.94), rgba(244, 249, 254, 0.96));
   border: 1px solid rgba(194, 211, 229, 0.4);
-  box-shadow:
-    inset 0 1px 0 rgba(255, 255, 255, 0.82),
-    0 14px 30px rgba(165, 185, 210, 0.12);
+  box-shadow: var(--shadow-xs);
 }
 
 .doc-table-header {
@@ -752,7 +746,7 @@ onMounted(async () => {
   padding: 8px 12px;
   border-radius: 999px;
   font-size: 12px;
-  font-weight: 800;
+  font-weight: 600;
 }
 
 .status-pill i {
@@ -763,39 +757,39 @@ onMounted(async () => {
 }
 
 .status-pill.success {
-  background: rgba(30, 200, 165, 0.16);
-  color: #119b7f;
+  background: var(--success-soft);
+  color: var(--success-color);
 }
 
 .status-pill.success i {
-  background: #119b7f;
+  background: var(--success-soft);
 }
 
 .status-pill.warning {
   background: rgba(255, 182, 72, 0.2);
-  color: #d68a10;
+  color: var(--warning-color);
 }
 
 .status-pill.warning i {
-  background: #d68a10;
+  background: rgba(162, 115, 44, 0.12);
 }
 
 .status-pill.info {
-  background: rgba(77, 141, 255, 0.18);
-  color: #4d8dff;
+  background: rgba(166, 61, 42, 0.18);
+  color: var(--primary-strong);
 }
 
 .status-pill.info i {
-  background: #4d8dff;
+  background: var(--primary-color);
 }
 
 .status-pill.danger {
   background: rgba(244, 95, 122, 0.16);
-  color: #f45f7a;
+  color: var(--danger-color);
 }
 
 .status-pill.danger i {
-  background: #f45f7a;
+  background: var(--danger-soft);
 }
 
 .action-buttons {
@@ -819,11 +813,11 @@ onMounted(async () => {
 
 .table-btn:hover {
   transform: translateY(-1px);
-  box-shadow: 0 10px 18px rgba(181, 198, 221, 0.12);
+  box-shadow: var(--shadow-sm);
 }
 
 .table-btn.primary {
-  background: rgba(91, 108, 255, 0.12);
+  background: rgba(166, 61, 42, 0.12);
   color: var(--primary-strong);
 }
 
@@ -838,12 +832,12 @@ onMounted(async () => {
 
 .table-btn.view {
   background: rgba(30, 200, 165, 0.12);
-  color: #119b7f;
+  color: var(--success-color);
 }
 
 .table-btn.danger {
-  background: rgba(244, 95, 122, 0.12);
-  color: #f45f7a;
+  background: var(--danger-soft);
+  color: var(--danger-color);
 }
 
 .doc-empty {
@@ -981,7 +975,7 @@ onMounted(async () => {
   }
 }
 
-@media (max-width: 1100px) {
+@media (max-width: 900px) {
   .doc-shell,
   .doc-table-panel {
     padding: 14px;

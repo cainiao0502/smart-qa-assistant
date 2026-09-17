@@ -7,9 +7,9 @@
         class="chat-textarea"
         :rows="1"
         placeholder="输入你的问题，按 Enter 发送"
-        @keydown.enter.exact.prevent="$emit('send')"
+        @keydown.enter.exact.prevent="handleSend"
       ></textarea>
-      
+
       <div class="input-toolbar">
         <div class="toolbar-left">
           <span class="mode-tag" :class="{ active: isKnowledgeBaseMode }">
@@ -18,7 +18,7 @@
           </span>
           <span class="kb-name">{{ currentKnowledgeBaseName || '通用助手' }}</span>
         </div>
-        
+
         <div class="toolbar-right">
           <span v-if="sessionId" class="session-badge">{{ sessionId.slice(-6) }}</span>
           <button
@@ -27,21 +27,19 @@
             class="send-btn stop"
             @click="$emit('stop')"
           >
-            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
-              <rect x="6" y="6" width="12" height="12" rx="2"/>
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+              <rect x="6" y="6" width="12" height="12" rx="2" />
             </svg>
+            停止
           </button>
           <button
             v-else
             type="button"
             class="send-btn"
-            :class="{ disabled: !question.trim() }"
-            :disabled="!question.trim()"
-            @click="$emit('send')"
+            :disabled="!question.trim() || isSent"
+            @click="handleSend"
           >
-            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-              <path d="M22 2L11 13M22 2L15 22L11 13M22 2L2 9L11 13"/>
-            </svg>
+            发送
           </button>
         </div>
       </div>
@@ -50,7 +48,7 @@
 </template>
 
 <script setup>
-import { computed } from 'vue'
+import { ref, computed } from 'vue'
 
 const props = defineProps({
   question: { type: String, default: '' },
@@ -64,7 +62,19 @@ const props = defineProps({
   sessionId: { type: String, default: '' }
 })
 
-defineEmits(['update:question', 'send', 'stop'])
+const emit = defineEmits(['update:question', 'send', 'stop'])
+
+/* isSent 仅作防抖禁用；发送反馈交给消息列表入场动画，按钮保持安静 */
+const isSent = ref(false)
+
+const handleSend = () => {
+  if (!props.question.trim() || isSent.value) return
+  emit('send')
+  isSent.value = true
+  setTimeout(() => {
+    isSent.value = false
+  }, 1200)
+}
 
 const modeLabel = computed(() => {
   if (props.isKnowledgeBaseMode) return 'RAG'
@@ -73,58 +83,47 @@ const modeLabel = computed(() => {
 </script>
 
 <style scoped>
+/* 宣纸墨韵 · 文档流输入区（grid 第四行，替代原 absolute 悬浮 + 220px 让位 hack） */
 .chat-input-container {
-  position: absolute;
-  left: 0;
-  right: 0;
-  bottom: 0;
-  padding: 16px 20px 20px;
-  background: linear-gradient(to top, rgba(255,255,255,0.98) 60%, rgba(255,255,255,0.9) 85%, transparent);
-  pointer-events: none;
+  grid-row: 4;
+  padding: 0;
 }
 
 .input-wrapper {
-  position: relative;
   max-width: 800px;
   margin: 0 auto;
-  background: #fff;
-  border-radius: 20px;
-  box-shadow:
-    0 2px 8px rgba(0,0,0,0.04),
-    0 8px 24px rgba(0,0,0,0.06),
-    0 0 0 1px rgba(0,0,0,0.06);
-  pointer-events: auto;
-  transition: box-shadow 0.2s ease;
+  background: var(--bg-surface-strong, #fbf9f3);
+  border: 1px solid var(--border-light);
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow-xs);
   display: flex;
   flex-direction: column;
+  transition: border-color var(--transition-fast), box-shadow var(--transition-fast);
 }
 
 .input-wrapper:focus-within {
-  box-shadow:
-    0 2px 8px rgba(0,0,0,0.04),
-    0 8px 32px rgba(0,0,0,0.1),
-    0 0 0 2px rgba(59, 130, 246, 0.3);
-  animation: glow-pulse 2s ease-in-out infinite;
+  border-color: var(--border-medium);
+  box-shadow: var(--shadow-sm);
 }
 
 .chat-textarea {
   display: block;
   width: 100%;
   min-height: 48px;
-  max-height: 180px;
-  padding: 14px 16px;
+  max-height: 160px;
+  padding: 13px 16px;
   border: none;
   outline: none;
   resize: none;
-  font-size: 15px;
-  line-height: 1.6;
-  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
-  color: #1a1a1a;
+  font-size: var(--text-md);
+  line-height: 1.7;
+  font-family: inherit;
+  color: var(--text-primary);
   background: transparent;
 }
 
 .chat-textarea::placeholder {
-  color: #9ca3af;
+  color: var(--text-muted);
 }
 
 .input-toolbar {
@@ -132,9 +131,7 @@ const modeLabel = computed(() => {
   align-items: center;
   justify-content: space-between;
   padding: 8px 12px;
-  background: #fafafa;
-  border-top: 1px solid #f0f0f0;
-  border-radius: 0 0 20px 20px;
+  border-top: 1px solid var(--border-light);
 }
 
 .toolbar-left {
@@ -149,18 +146,17 @@ const modeLabel = computed(() => {
   align-items: center;
   gap: 5px;
   padding: 4px 10px;
-  border-radius: 12px;
-  background: #f3f4f6;
-  color: #6b7280;
-  font-size: 12px;
-  font-weight: 600;
+  border-radius: var(--radius-xs);
+  background: var(--bg-surface-dark, #efe9db);
+  color: var(--text-secondary);
+  font-size: var(--text-sm);
+  font-weight: var(--weight-medium);
   white-space: nowrap;
-  transition: all 0.2s ease;
 }
 
 .mode-tag.active {
-  background: #ecfdf5;
-  color: #059669;
+  background: var(--primary-soft);
+  color: var(--primary-strong);
 }
 
 .mode-dot {
@@ -171,8 +167,8 @@ const modeLabel = computed(() => {
 }
 
 .kb-name {
-  font-size: 13px;
-  color: #9ca3af;
+  font-size: var(--text-sm);
+  color: var(--text-muted);
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -187,94 +183,89 @@ const modeLabel = computed(() => {
 
 .session-badge {
   padding: 3px 8px;
-  border-radius: 8px;
-  background: #f3f4f6;
-  color: #9ca3af;
-  font-size: 11px;
-  font-weight: 500;
-  font-family: 'SF Mono', Monaco, 'Cascadia Code', monospace;
+  border-radius: var(--radius-xs);
+  background: var(--bg-surface-dark, #efe9db);
+  color: var(--text-muted);
+  font-size: var(--text-xs);
+  font-weight: var(--weight-medium);
+  font-family: var(--font-mono, Consolas, monospace);
 }
 
+/* 印章式发送按钮：宋体宽字距，按下如钤印（140ms 临界阻尼，无弹跳） */
 .send-btn {
-  display: flex;
+  display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 36px;
+  gap: 6px;
   height: 36px;
-  border: none;
-  border-radius: 12px;
-  background: linear-gradient(135deg, #3b82f6 0%, #2563eb 100%);
-  color: #fff;
+  padding: 0 20px;
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: var(--primary-color);
+  color: var(--text-inverse, #f9f4ea);
+  font-family: var(--font-serif, serif);
+  font-size: var(--text-base);
+  font-weight: var(--weight-semibold);
+  letter-spacing: 0.2em;
+  text-indent: 0.2em; /* 抵消末字字距，视觉居中 */
   cursor: pointer;
-  transition: all var(--duration-jelly, 400ms) var(--spring-soft, cubic-bezier(0.34, 1.56, 0.64, 1));
-  box-shadow: 0 2px 8px rgba(59, 130, 246, 0.3);
+  transition: background var(--transition-fast), transform var(--transition-fast);
 }
 
-.send-btn:hover:not(.disabled) {
-  transform: scale(var(--jelly-hover-scale, 1.03));
-  box-shadow: 0 4px 12px rgba(59, 130, 246, 0.4);
+.send-btn:hover:not(:disabled) {
+  background: var(--primary-strong);
 }
 
-.send-btn:active:not(.disabled) {
-  transform: scaleX(var(--jelly-press-x, 1.04)) scaleY(var(--jelly-press-y, 0.96));
+.send-btn:active:not(:disabled) {
+  transform: scale(0.97);
 }
 
-.send-btn.disabled {
-  background: #e5e7eb;
-  color: #9ca3af;
+.send-btn:disabled {
+  opacity: 0.4;
   cursor: not-allowed;
-  box-shadow: none;
-  transform: none;
 }
 
 .send-btn.stop {
-  background: linear-gradient(135deg, #ef4444 0%, #dc2626 100%);
-  box-shadow: 0 2px 8px rgba(239, 68, 68, 0.3);
+  background: var(--danger-color);
+  letter-spacing: 0.08em;
+  text-indent: 0.08em;
 }
 
 .send-btn.stop:hover {
-  transform: scale(var(--jelly-hover-scale, 1.03));
-  box-shadow: 0 4px 12px rgba(239, 68, 68, 0.4);
-}
-
-.send-btn.stop:active {
-  transform: scaleX(var(--jelly-press-x, 1.04)) scaleY(var(--jelly-press-y, 0.96));
+  background: var(--primary-strong);
 }
 
 @media (max-width: 768px) {
-  .chat-input-container {
-    padding: 12px 12px 16px;
-  }
-  
   .input-wrapper {
-    border-radius: 16px;
+    border-radius: var(--radius-sm);
   }
-  
+
   .chat-textarea {
     padding: 12px 14px;
-    padding-bottom: 42px;
-    font-size: 16px;
+    font-size: 16px; /* 移动端防 iOS 聚焦缩放 */
   }
-  
+
   .input-toolbar {
     padding: 6px 10px;
   }
-  
-  .kb-name {
-    display: none;
-  }
-  
+
+  .kb-name,
   .session-badge {
     display: none;
+  }
+
+  .send-btn {
+    height: 40px; /* 触屏目标 ≥40px */
   }
 }
 
 @media (prefers-reduced-motion: reduce) {
   .send-btn {
-    transition-duration: 0.01ms !important;
+    transition: none;
   }
-  .input-wrapper:focus-within {
-    animation: none !important;
+
+  .send-btn:active:not(:disabled) {
+    transform: none;
   }
 }
 </style>

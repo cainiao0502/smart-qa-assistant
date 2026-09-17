@@ -34,7 +34,9 @@ export default defineConfig({
     port: 5173,
     proxy: {
       '/api': {
-        target: 'http://localhost:8080',
+        // 用 127.0.0.1 而非 localhost：Node 17+ 把 localhost 解析为 IPv6 ::1，
+        // 后端只监听 IPv4，走 localhost 会导致代理 ECONNREFUSED → 页面全部 500
+        target: 'http://127.0.0.1:8080',
         changeOrigin: true,
       }
     }
