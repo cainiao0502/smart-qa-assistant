@@ -1,8 +1,14 @@
 .env
 .kiro/
-.idea/workspace.xml
+.idea/
+target/
 uploads/
-miniagent-backend/*.log
-miniagent-front/*.log
+*.log
+*.err
+.workbuddy/
+.playwright-cli/
+miniagent-front/shots/
+miniagent-front/*.png
+miniagent-front/s1.yaml
 data/mcp/custom-servers.json
 data/skills/readme/
