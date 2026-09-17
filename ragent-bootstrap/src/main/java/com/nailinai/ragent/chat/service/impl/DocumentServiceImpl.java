@@ -11,6 +11,7 @@ import com.nailinai.ragent.mapper.DocumentChunkMapper;
 import com.nailinai.ragent.mapper.DocumentMapper;
 import com.nailinai.ragent.mapper.DocumentTaskMapper;
 import com.nailinai.ragent.mapper.KnowledgeBaseMapper;
+import com.nailinai.ragent.user.context.UserIdHolder;
 import com.nailinai.ragent.chat.service.DocumentService;
 import com.nailinai.ragent.chat.service.FileStorageService;
 import org.springframework.stereotype.Service;
@@ -43,7 +44,8 @@ public class DocumentServiceImpl implements DocumentService {
 
     @Override
     public DocumentResponse upload(Long kbId, MultipartFile file) {
-        if (knowledgeBaseMapper.selectById(kbId) == null) {
+        Long userId = com.nailinai.ragent.user.context.UserContext.currentUserId();
+        if (knowledgeBaseMapper.selectByIdAndOwner(kbId, userId) == null) {
             throw new BusinessException(ErrorCode.NOT_FOUND, "knowledge base not found");
         }
         if (file == null || file.isEmpty()) {
@@ -84,7 +86,7 @@ public class DocumentServiceImpl implements DocumentService {
      */
     @Override
     public Document getById(Long docId) {
-        Document document = documentMapper.selectById(docId);
+        Document document = requireAccessibleDocument(docId);
         if (document == null) {
             throw new BusinessException(ErrorCode.NOT_FOUND, "document not found");
         }
@@ -93,7 +95,7 @@ public class DocumentServiceImpl implements DocumentService {
 
     @Override
     public DocumentDetailResponse getDetail(Long docId) {
-        Document document = documentMapper.selectById(docId);
+        Document document = requireAccessibleDocument(docId);
         if (document == null) {
             throw new BusinessException(ErrorCode.NOT_FOUND, "document not found");
         }
@@ -122,7 +124,7 @@ public class DocumentServiceImpl implements DocumentService {
     @Override
     @Transactional
     public void delete(Long docId) {
-        Document document = documentMapper.selectById(docId);
+        Document document = requireAccessibleDocument(docId);
         if (document == null) {
             throw new BusinessException(ErrorCode.NOT_FOUND, "document not found");
         }
@@ -130,6 +132,34 @@ public class DocumentServiceImpl implements DocumentService {
         documentTaskMapper.deleteByDocId(docId);
         documentMapper.deleteById(docId);
         fileStorageService.delete(document.getStoragePath());
+    }
+
+    /**
+     * 取文档并校验归属：只有所属知识库的所有者才能读到它。
+     *
+     * <p>为什么必须在这里做：文档的读接口（详情、触发入库、删除）此前只用 {@code selectById(docId)}，
+     * 只要知道 docId 就能读到别人的知识库内容、甚至删掉别人的文档——而知识库入口
+     * （上传、删除知识库）是校验了 owner 的，等于数据出口比入口更松。</p>
+     *
+     * <p><b>没有登录上下文的内部调用直接放行</b>（例如知识库级联删除、离线评估）：
+     * 这些路径的归属由上游负责，其中级联删除在删知识库前已经校验过 owner。
+     * 用户请求一定会带 userId——它要么在请求线程里取自 Sa-Token，
+     * 要么由 {@code ChatController} 预先绑定到异步线程（见 {@code UserIdHolder}）。</p>
+     */
+    private Document requireAccessibleDocument(Long docId) {
+        Document document = documentMapper.selectById(docId);
+        if (document == null) {
+            throw new BusinessException(ErrorCode.NOT_FOUND, "document not found");
+        }
+        Long userId = UserIdHolder.get();
+        if (userId == null) {
+            return document;
+        }
+        if (knowledgeBaseMapper.selectByIdAndOwner(document.getKbId(), userId) == null) {
+            // 对外一律返回「不存在」，不暴露「这个文档存在但不属于你」
+            throw new BusinessException(ErrorCode.NOT_FOUND, "document not found");
+        }
+        return document;
     }
 
     private String resolveFilename(String filename) {

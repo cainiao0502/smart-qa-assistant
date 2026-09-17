@@ -43,6 +43,20 @@ public class KnowledgeBaseLookupToolExecutor implements ToolExecutor {
     }
 
     @Override
+    public String getDescription() {
+        return "在当前知识库中做聚焦检索，返回更精确的文档片段。当已有检索上下文过于宽泛、或不足以回答问题时使用。";
+    }
+
+    @Override
+    public Map<String, Object> getParametersSchema() {
+        Map<String, Object> properties = new LinkedHashMap<>();
+        properties.put("query", Map.of("type", "string", "description", "检索查询语句，应具体描述要找的信息"));
+        properties.put("topK", Map.of("type", "integer", "description", "返回片段数量上限（1-8）", "minimum", 1, "maximum", 8));
+        properties.put("scoreThreshold", Map.of("type", "number", "description", "相似度阈值（0-1），越高越严格", "minimum", 0, "maximum", 1));
+        return ToolExecutor.objectSchema(properties, List.of("query"));
+    }
+
+    @Override
     public ToolExecutionResult execute(Map<String, Object> arguments, ToolContext context) {
         long startTime = System.currentTimeMillis();
         String query = valueAsString(arguments.get("query"));

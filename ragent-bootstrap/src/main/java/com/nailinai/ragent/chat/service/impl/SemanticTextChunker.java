@@ -169,6 +169,14 @@ public class SemanticTextChunker implements TextChunker {
             current.append(c);
 
             if (isSentenceEnd(c)) {
+                // 英文句点要区分「句末」与「小数点 / 标识符分隔符」：
+                // 仅当后一个字符是空白或已到行尾时才视为句子结束。
+                // 否则 0.60 / chunk.size / v3.2 / hnsw.ef_search 会被切成 "0. 60"
+                // 这类畸形文本 —— 既破坏关键词通道的词面匹配，也污染向量语义表示。
+                if (c == '.' && i + 1 < line.length() && !Character.isWhitespace(line.charAt(i + 1))) {
+                    continue;
+                }
+
                 // 检查下一个字符是否也是句子结束符（如 ...）或引号
                 if (i + 1 < line.length()) {
                     char next = line.charAt(i + 1);

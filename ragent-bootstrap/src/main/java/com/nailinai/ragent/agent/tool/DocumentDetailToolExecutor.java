@@ -7,6 +7,7 @@ import com.nailinai.ragent.framework.common.BusinessException;
 import com.nailinai.ragent.framework.common.ErrorCode;
 import com.nailinai.ragent.dto.response.DocumentDetailResponse;
 import com.nailinai.ragent.dto.response.DocumentResponse;
+import com.nailinai.ragent.dto.response.ReferenceChunkResponse;
 import com.nailinai.ragent.dto.response.ToolCallTraceResponse;
 import com.nailinai.ragent.chat.service.DocumentService;
 import org.springframework.stereotype.Component;
@@ -41,7 +42,15 @@ public class DocumentDetailToolExecutor implements ToolExecutor {
 
     @Override
     public String getDescription() {
-        return "Read one document in detail by docId or document name, including content summary and chunk summary.";
+        return "按 docId 或文档名深入读取单个文档，返回内容摘要与切片摘要。通常在 kb_catalog 之后使用。";
+    }
+
+    @Override
+    public Map<String, Object> getParametersSchema() {
+        Map<String, Object> properties = new LinkedHashMap<>();
+        properties.put("docId", Map.of("type", "integer", "description", "文档 ID，来自 kb_catalog 返回的清单"));
+        properties.put("documentName", Map.of("type", "string", "description", "文档名，docId 不可用时使用"));
+        return ToolExecutor.objectSchema(properties, List.of());
     }
 
     @Override
@@ -58,6 +67,20 @@ public class DocumentDetailToolExecutor implements ToolExecutor {
         traceArguments.put("docId", detail.getId());
         traceArguments.put("documentName", detail.getName());
 
+        // 深读过的文档就是最终回答的主要依据，其切片必须进入引用溯源，
+        // 否则前端 ReferencePanel 拿不到来源（此前固定返回 List.of() 导致 references 为空）
+        List<ReferenceChunkResponse> references = detail.getChunks() == null ? List.of()
+                : detail.getChunks().stream()
+                        .map(chunk -> ReferenceChunkResponse.builder()
+                                .docId(detail.getId())
+                                .documentName(detail.getName())
+                                .fileType(detail.getFileType())
+                                .chunkIndex(chunk.getChunkIndex())
+                                .paragraphIndex(chunk.getParagraphIndex())
+                                .chunkText(chunk.getChunkText())
+                                .build())
+                        .toList();
+
         return ToolExecutionResult.builder()
                 .trace(ToolCallTraceResponse.builder()
                         .toolName(getToolName())
@@ -72,7 +95,7 @@ public class DocumentDetailToolExecutor implements ToolExecutor {
                         .build())
                 .summary("Loaded document %s".formatted(detail.getName()))
                 .supplementalContext(observation)
-                .references(List.of())
+                .references(references)
                 .rawResult(detail)
                 .observation(observation)
                 .build();

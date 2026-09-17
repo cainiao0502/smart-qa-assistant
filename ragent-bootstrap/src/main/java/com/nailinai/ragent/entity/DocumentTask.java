@@ -40,4 +40,7 @@ public class DocumentTask extends BaseEntity {
 
     /** 写入步骤耗时（毫秒） */
     private Long indexDurationMs;
+
+    /** 重试次数，失败后自动重试，超过最大次数则放弃 */
+    private Integer retryCount;
 }

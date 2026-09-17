@@ -37,7 +37,12 @@ public class KnowledgeBaseCatalogToolExecutor implements ToolExecutor {
 
     @Override
     public String getDescription() {
-        return "List documents in the current knowledge base, including ids, file types, status, and chunk counts.";
+        return "列出当前知识库中的文档清单（含 docId、文件类型、状态、切片数）。当用户问知识库里有什么、库是否为空、或需要先盘点再选文档时使用。";
+    }
+
+    @Override
+    public Map<String, Object> getParametersSchema() {
+        return ToolExecutor.objectSchema(Map.of(), List.of());
     }
 
     @Override

@@ -8,6 +8,8 @@ import org.apache.ibatis.annotations.Delete;
 import org.apache.ibatis.annotations.Select;
 import org.apache.ibatis.annotations.Update;
 
+import java.util.List;
+
 /**
  * 文档异步入库任务的数据库操作接口。
  */
@@ -20,9 +22,9 @@ public interface DocumentTaskMapper {
      */
     @Insert("""
             INSERT INTO document_task (doc_id, kb_id, status, progress, error_message,
-                parse_duration_ms, chunk_duration_ms, embed_duration_ms, index_duration_ms)
+                parse_duration_ms, chunk_duration_ms, embed_duration_ms, index_duration_ms, retry_count)
             VALUES (#{docId}, #{kbId}, #{status}, #{progress}, #{errorMessage},
-                #{parseDurationMs}, #{chunkDurationMs}, #{embedDurationMs}, #{indexDurationMs})
+                #{parseDurationMs}, #{chunkDurationMs}, #{embedDurationMs}, #{indexDurationMs}, #{retryCount})
             """)
     @Options(useGeneratedKeys = true, keyProperty = "id")
     int insert(DocumentTask task);
@@ -37,6 +39,7 @@ public interface DocumentTaskMapper {
                    chunk_duration_ms AS chunkDurationMs,
                    embed_duration_ms AS embedDurationMs,
                    index_duration_ms AS indexDurationMs,
+                   retry_count AS retryCount,
                    created_at AS createdAt, updated_at AS updatedAt
             FROM document_task
             WHERE id = #{id}
@@ -53,6 +56,7 @@ public interface DocumentTaskMapper {
                    chunk_duration_ms AS chunkDurationMs,
                    embed_duration_ms AS embedDurationMs,
                    index_duration_ms AS indexDurationMs,
+                   retry_count AS retryCount,
                    created_at AS createdAt, updated_at AS updatedAt
             FROM document_task
             WHERE doc_id = #{docId}
@@ -60,6 +64,31 @@ public interface DocumentTaskMapper {
             LIMIT 1
             """)
     DocumentTask selectLatestByDocId(Long docId);
+
+    /**
+     * 查询需要重试或恢复的任务：
+     * 1. FAILED 且 retry_count < maxRetry（自动重试）
+     * 2. RUNNING/PENDING 且 updated_at 早于阈值（服务重启后卡住的任务恢复）
+     */
+    @Select("""
+            SELECT id, doc_id AS docId, kb_id AS kbId, status, progress,
+                   error_message AS errorMessage,
+                   parse_duration_ms AS parseDurationMs,
+                   chunk_duration_ms AS chunkDurationMs,
+                   embed_duration_ms AS embedDurationMs,
+                   index_duration_ms AS indexDurationMs,
+                   retry_count AS retryCount,
+                   created_at AS createdAt, updated_at AS updatedAt
+            FROM document_task
+            WHERE (status = 'FAILED' AND retry_count < #{maxRetry})
+               OR (status IN ('RUNNING', 'PENDING') AND updated_at < #{staleThreshold})
+            ORDER BY id ASC
+            LIMIT #{limit}
+            """)
+    List<DocumentTask> selectRetryCandidates(
+            @org.apache.ibatis.annotations.Param("maxRetry") int maxRetry,
+            @org.apache.ibatis.annotations.Param("staleThreshold") java.time.LocalDateTime staleThreshold,
+            @org.apache.ibatis.annotations.Param("limit") int limit);
 
     /**
      * 更新任务的状态、进度和错误信息。
@@ -78,6 +107,20 @@ public interface DocumentTaskMapper {
             WHERE id = #{id}
             """)
     int update(DocumentTask task);
+
+    /**
+     * 重置任务为 PENDING 并递增 retry_count，供定时轮询重试使用。
+     */
+    @Update("""
+            UPDATE document_task
+            SET status = 'PENDING',
+                progress = 'PENDING',
+                error_message = null,
+                retry_count = retry_count + 1,
+                updated_at = CURRENT_TIMESTAMP
+            WHERE id = #{id}
+            """)
+    int resetForRetry(Long id);
 
     @Delete("""
             DELETE FROM document_task

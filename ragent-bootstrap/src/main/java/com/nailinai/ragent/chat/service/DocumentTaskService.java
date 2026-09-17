@@ -45,4 +45,14 @@ public interface DocumentTaskService {
      * @param forceReindex 是否强制重建索引（即使文档已 INDEXED）
      */
     void executeAsync(Long taskId, Long docId, boolean forceReindex);
+
+    /**
+     * 扫描并重试失败或卡住的任务。
+     * 由定时任务调用，每分钟执行一次：
+     * 1. FAILED 且 retry_count < MAX_RETRY 的任务自动重试
+     * 2. RUNNING/PENDING 且超过 STALE_THRESHOLD 未更新的任务（服务重启后卡住）恢复执行
+     *
+     * @return 本次触发的重试任务数量
+     */
+    int retryStaleTasks();
 }

@@ -70,6 +70,7 @@ public class DocumentTaskServiceImpl implements DocumentTaskService {
         task.setStatus(TaskStatus.PENDING);
         task.setProgress(TaskProgress.PENDING);
         task.setErrorMessage(null);
+        task.setRetryCount(0);
         // insert 后自增主键自动回填到 task.id
         documentTaskMapper.insert(task);
         return task;
@@ -267,5 +268,30 @@ public class DocumentTaskServiceImpl implements DocumentTaskService {
         return embedding.stream()
                 .map(value -> Float.isFinite(value) ? String.valueOf(value) : "0.0")
                 .collect(Collectors.joining(",", "[", "]"));
+    }
+
+    private static final int MAX_RETRY = 3;
+    private static final int STALE_MINUTES = 5;
+    private static final int BATCH_LIMIT = 10;
+
+    @Override
+    public int retryStaleTasks() {
+        java.time.LocalDateTime staleThreshold = java.time.LocalDateTime.now().minusMinutes(STALE_MINUTES);
+        List<DocumentTask> candidates = documentTaskMapper.selectRetryCandidates(MAX_RETRY, staleThreshold, BATCH_LIMIT);
+        if (candidates.isEmpty()) {
+            return 0;
+        }
+        int triggered = 0;
+        for (DocumentTask task : candidates) {
+            try {
+                documentTaskMapper.resetForRetry(task.getId());
+                executeAsync(task.getId(), task.getDocId(), true);
+                triggered++;
+                log.info("Retry triggered for task {}: docId={}, retryCount={}", task.getId(), task.getDocId(), task.getRetryCount());
+            } catch (Exception ex) {
+                log.error("Failed to trigger retry for task {}", task.getId(), ex);
+            }
+        }
+        return triggered;
     }
 }
