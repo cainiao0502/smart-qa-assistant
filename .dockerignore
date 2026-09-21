@@ -7,8 +7,8 @@
 .kiro/
 .workbuddy/
 docs-internal/
-uploads/
-data/
+data/mcp/custom-servers.json
+data/skills/readme/
 *.log
 .env
 backend.err

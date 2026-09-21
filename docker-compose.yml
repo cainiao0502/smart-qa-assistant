@@ -46,6 +46,7 @@ services:
       # 容器网络内固定指向服务名（覆盖 .env 里的 127.0.0.1）
       SPRING_DATASOURCE_URL: jdbc:postgresql://postgres:5432/ragent
       SPRING_REDIS_HOST: redis
+      TZ: ${TZ:-Asia/Shanghai}
       # CORS：浏览器经前端 nginx 同源访问 /api，无需额外来源
       APP_CORS_ALLOWED_ORIGINS: ${APP_CORS_ALLOWED_ORIGINS:-http://localhost:8081}
     volumes:

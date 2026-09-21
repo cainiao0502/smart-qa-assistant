@@ -23,6 +23,8 @@ WORKDIR /app
 RUN useradd --system --create-home ragent
 USER ragent
 
+COPY --chown=ragent:ragent data/ data/
+
 # 上传文件目录（挂载卷持久化）
 RUN mkdir -p /app/uploads /app/data
 VOLUME ["/app/uploads", "/app/data"]
