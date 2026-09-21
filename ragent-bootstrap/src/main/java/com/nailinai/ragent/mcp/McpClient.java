@@ -377,9 +377,14 @@ public class McpClient {
             sseState.sessionId = sessionIdHeader;
         }
 
+        // 持有当前流的引用：reset() 关闭它，reader 线程 readLine 会抛 IOException 退出，
+        // 否则 404 重连路径每次都泄漏一条 HTTP 连接 + 一个守护线程
+        InputStream stream = response.body();
+        sseState.sseStream = stream;
+
         Thread readerThread = new Thread(() -> {
             try (BufferedReader reader = new BufferedReader(
-                    new InputStreamReader(response.body(), StandardCharsets.UTF_8))) {
+                    new InputStreamReader(stream, StandardCharsets.UTF_8))) {
                 String line;
                 StringBuilder dataBuilder = new StringBuilder();
                 String eventType = "";
@@ -408,7 +413,11 @@ public class McpClient {
                 }
             } catch (Exception ignored) {
             } finally {
-                sseState.sseConnected = false;
+                // 只有当前连接才允许把 sseConnected 打回 false：reset()/重连关闭旧流后，
+                // 旧 reader 线程从这里退出，不能误伤新连接的已连接状态
+                if (sseState.sseStream == stream) {
+                    sseState.sseConnected = false;
+                }
             }
         }, "sse-reader-" + serverId);
         readerThread.setDaemon(true);
@@ -419,6 +428,12 @@ public class McpClient {
             Thread.sleep(50);
         }
         if (!sseState.sseConnected) {
+            // 握手超时：此刻流还没有交付给任何有效会话，直接关掉，避免再泄漏一条连接 + 一个线程
+            try {
+                stream.close();
+            } catch (IOException ignored) {
+            }
+            sseState.sseStream = null;
             throw new BusinessException(ErrorCode.INTERNAL_ERROR,
                     "SSE endpoint event not received from server: " + serverId);
         }
@@ -655,6 +670,8 @@ public class McpClient {
     private static final class SseSessionState extends SessionState {
         private volatile boolean sseConnected;
         private volatile String postEndpoint;
+        /** 当前 SSE 响应流；reset() 必须先 close 它，让持有它的守护 reader 线程退出。 */
+        private volatile InputStream sseStream;
         private final ConcurrentMap<String, java.util.concurrent.CompletableFuture<JsonNode>> pendingResponses = new ConcurrentHashMap<>();
 
         void offerResponse(String id, JsonNode payload) {
@@ -669,6 +686,11 @@ public class McpClient {
             pendingResponses.put(id, future);
             try {
                 return future.get(timeout.toMillis(), java.util.concurrent.TimeUnit.MILLISECONDS);
+            } catch (InterruptedException ex) {
+                // 恢复中断标志：否则上层线程池（如虚拟线程执行器）的中断信号在这里丢失
+                pendingResponses.remove(id);
+                Thread.currentThread().interrupt();
+                return null;
             } catch (Exception ex) {
                 pendingResponses.remove(id);
                 return null;
@@ -678,6 +700,16 @@ public class McpClient {
         @Override
         void reset() {
             super.reset();
+            // 关旧流 → 旧 reader 线程在 readLine 上抛 IOException 退出（其 catch 会静默吞掉，
+            // 不会误报），finally 里 sseStream==stream 校验保证不会误伤新连接的 sseConnected。
+            InputStream old = this.sseStream;
+            this.sseStream = null;
+            if (old != null) {
+                try {
+                    old.close();
+                } catch (IOException ignored) {
+                }
+            }
             this.sseConnected = false;
             this.postEndpoint = null;
             pendingResponses.clear();
