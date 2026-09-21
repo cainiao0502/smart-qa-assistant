@@ -1,15 +1,15 @@
 # 🤖 智能问答助手（Smart QA Assistant）
 
-一个基于 Java 21 + Spring Boot 4 + Vue 3 的 🤖 Agent/RAG 项目，目标不是做"再一个聊天壳" 🥱，而是把知识库检索、工具调用、流式回答和多步 Agent Runtime 串成一条可运行、可讲清楚的主链路 🚀
+一个基于 Java 21 + Spring Boot 4 + Vue 3 的 🤖 Agent / RAG 应用：把文档入库、混合检索、工具调用、流式回答与多步 Agent 执行串成一条完整可运行的主链路 🚀
 
-适合作为个人项目展示的重点在于两件事：
+它的重点在于两件事：
 
-1. 🔄 它不只做单次 LLM 调用，而是实现了 `Plan -> Act -> Observe -> Replan -> Finish` 的执行闭环。
-2. 🖥️ 它不只停留在后端接口，而是补齐了文档入库、SSE 聊天、MCP 管理、Skill 调试、用户认证和运行轨迹展示。
+1. 🔄 **完整的执行闭环**：实现 `Plan -> Act -> Observe -> Replan -> Finish`，由模型自主拆解任务、选择工具、观察结果并调整计划。
+2. 🖥️ **端到端可跑通**：文档入库、SSE 聊天、MCP 管理、Skill 调试、用户认证与运行轨迹展示均已落地。
 
 ## 🎯 项目定位
 
-这个项目最初从一个精简版 RAG 系统起步 📚，后续逐步扩展到了 Agent 化执行 🤖。当前版本重点解决的是：
+一个可运行的 Agent / RAG 应用，覆盖从知识录入到多步执行的完整链路：
 
 - 📤 文档上传、解析、切分、向量化、检索
 - 💬 基于知识库的多轮聊天（含会话级并发串行化保护）
@@ -237,6 +237,6 @@ APP_EVAL_ENABLED=true mvn -pl ragent-bootstrap -am spring-boot:run
 
 ## ⚠️ 说明
 
-- 🏗️ 这是一个个人项目，当前更关注主链路闭环、架构表达和可讲性
-- 🔒 本地运行时配置文件和密钥不应提交到公开仓库（`.env`、`data/mcp/custom-servers.json` 已在 `.gitignore`）
-- 📖 某些设计文档记录的是早期 MVP 方案，和当前实现会有差异，阅读时请以当前代码和本 README 为准
+- 🏗️ 这是一个个人作品项目，聚焦主链路闭环与架构清晰度，欢迎交流
+- 🔒 本地运行配置与密钥不纳入版本管理（`.env`、`data/mcp/custom-servers.json` 已在 `.gitignore`）
+- 📖 接口与配置说明以 `API.md`、`.env.example` 及代码为准
