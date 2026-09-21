@@ -1,0 +1,14 @@
+**/target/
+**/node_modules/
+**/dist/
+.git/
+.idea/
+.vscode/
+.kiro/
+.workbuddy/
+docs-internal/
+uploads/
+data/
+*.log
+.env
+backend.err
