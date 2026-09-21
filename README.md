@@ -200,6 +200,9 @@ npm run dev
 - `RagSemanticEvaluatorTest`：LLM-as-judge 打分解析、非法响应降级、分数钳制
 - `GuardrailManagerTest`：长度限制、Prompt 注入检测（中英文）、规则短路、可开关
 - `ChatServiceImplTest`：护栏/并发锁拦截、CLARIFY/DIRECT/AGENT 分支、编排失败状态回写、锁释放
+- `ToolExecutorRegistryTest`：跨源工具重名（内置 / Skill / MCP）收敛为单个声明、查找与声明的优先级一致、内置重名在启动期失败
+- `SkillControllerTest`：用户端技能目录不携带 SKILL.md 正文、管理端详情接口照旧返回正文
+- `AsyncSafeSaInterceptorTest`：管理员墙路径边界（MCP / Skill 管理 admin-only，技能目录为白名单例外）
 
 运行方式：
 

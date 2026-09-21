@@ -384,8 +384,8 @@ GET /api/skills
   {
     "name": "codeagent",
     "title": "Code Agent",
-    "description": "代码生成与分析",
-    "toolName": "code_agent",
+    "description": "Use the codeagent skill as an executable tool to transform retrieved coding context into implementation guidance.",
+    "toolName": "codeagent_transform",
     "executorType": "llm",
     "executable": true
   }
@@ -468,9 +468,38 @@ POST /api/skills/reload
 
 ---
 
+### 6.9 获取技能目录（用户端）
+
+```
+GET /api/skills/available
+```
+
+对话页用它列出「可勾选启用的技能」，**普通登录用户即可访问**（`/api/skills/**` 其余接口均要求 `admin` 角色）。
+
+**响应：** `SkillDefinitionResponse` 数组——仅元数据，**不含 SKILL.md 正文**：
+
+```json
+[
+  {
+    "name": "codeagent",
+    "title": "Code Agent",
+    "description": "Use the codeagent skill as an executable tool to transform retrieved coding context into implementation guidance.",
+    "toolName": "codeagent_transform",
+    "executorType": "llm_transform",
+    "executable": true
+  }
+]
+```
+
+> 正文只在模型调用 `load_skill` 工具时进入本轮上下文（渐进式披露第二层），不通过 HTTP 下发给普通用户；需要正文的管理端场景请用 6.2 的详情接口。
+
+---
+
 ## 7. 认证 `/api/auth`
 
 > 除 `login` / `register` 外，所有 `/api/**` 接口均需携带 `Authorization: Bearer <token>`。
+>
+> 其中平台级高危能力仅 `admin` 角色可访问：`/api/mcp/**`、`/api/retrieval/debug/**`，以及 `/api/skills/**` —— **例外是 `GET /api/skills/available`**（技能目录，普通用户可见，用于对话页勾选技能）。普通用户访问受保护路径返回 `FORBIDDEN`。
 
 ### 7.1 注册
 
