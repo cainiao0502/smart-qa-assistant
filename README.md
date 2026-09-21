@@ -1,5 +1,6 @@
 # 🤖 智能问答助手（Smart QA Assistant）
 
+[![CI](https://github.com/cainiao0502/smart-qa-assistant/actions/workflows/ci.yml/badge.svg)](https://github.com/cainiao0502/smart-qa-assistant/actions/workflows/ci.yml)
 一个基于 Java 21 + Spring Boot 4 + Vue 3 的 🤖 Agent / RAG 应用：把文档入库、混合检索、工具调用、流式回答与多步 Agent 执行串成一条完整可运行的主链路 🚀
 
 它的重点在于两件事：
@@ -124,14 +125,35 @@ ragent-parent/
 
 ## 🚀 快速启动
 
-### 1️⃣ 环境准备
+### 🐳 方式一：Docker Compose 一键启动（推荐）
+
+前置要求：Docker + Docker Compose。
+
+```bash
+# 1. 准备配置：复制模板并填入 API key（LLM/Embedding 至少配一组，否则后端起不来）
+cp .env.example .env
+
+# 2. 构建并启动（首次会自动建表：8 张表 + pgvector 扩展 + 默认知识库）
+docker compose up -d --build
+```
+
+启动后：
+- 🖥️ 前端：`http://localhost:8081`
+- 🔧 后端 API：`http://localhost:8080`
+- 📦 数据持久化在 named volume（pgdata / redisdata / uploads / appdata），`docker compose down` 不丢数据；要彻底重置加 `-v`
+
+> 注意：`.env` 是 compose 的必需文件（含 API key），缺失时 `docker compose up` 会直接报错。
+
+### 🔧 方式二：本地手工启动
+
+#### 1️⃣ 环境准备
 
 - ☕ JDK 21
 - 📦 Node.js 18+
 - 🐘 PostgreSQL + pgvector 扩展
 - 🍃 Redis
 
-### 2️⃣ 初始化数据库
+#### 2️⃣ 初始化数据库
 
 ```bash
 psql -U postgres -d ragent -f database.sql
@@ -139,8 +161,7 @@ psql -U postgres -d ragent -f database.sql
 
 （脚本包含知识库/文档/切片/会话/Agent 运行/任务/用户 8 张表）
 
-### 3️⃣ 配置环境变量
-
+#### 3️⃣ 配置环境变量
 在项目根目录复制模板：
 
 ```bash
@@ -155,8 +176,7 @@ cp .env.example .env
 APP_MCP_ENABLED=true
 ```
 
-### 4️⃣ 启动后端
-
+#### 4️⃣ 启动后端
 ```bash
 cd ragent-bootstrap
 mvn spring-boot:run
@@ -164,8 +184,7 @@ mvn spring-boot:run
 
 默认端口：`http://localhost:8080`
 
-### 5️⃣ 启动前端
-
+#### 5️⃣ 启动前端
 ```bash
 cd miniagent-front
 npm install
