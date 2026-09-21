@@ -12,3 +12,6 @@ miniagent-front/*.png
 miniagent-front/s1.yaml
 data/mcp/custom-servers.json
 data/skills/readme/
+
+# 内部工作文档（求职准备、验证记录、设计草稿），不随公开仓库发布
+docs-internal/
