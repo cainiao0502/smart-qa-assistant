@@ -72,6 +72,15 @@ ai:
         base-url: ${APP_LLM_BASE_URL:https://api.minimaxi.com/v1}
         api-key: ${APP_LLM_API_KEY:}
         model: ${APP_LLM_EMBEDDING_MODEL:embo-01}
+  rerank:
+    # 重排序模型（可选）：cross-encoder 对「query+候选」成对打分，精排质量显著高于启发式。
+    # 开启需配置 API key（如 SiliconFlow 的 BAAI/bge-reranker-v2-m3）；未配置时自动降级为启发式重排。
+    enabled: ${AI_RERANK_ENABLED:false}
+    provider: ${AI_RERANK_PROVIDER:siliconflow}
+    base-url: ${AI_RERANK_BASE_URL:https://api.siliconflow.cn/v1}
+    api-key: ${AI_RERANK_API_KEY:}
+    model: ${AI_RERANK_MODEL:BAAI/bge-reranker-v2-m3}
+    timeout-ms: ${AI_RERANK_TIMEOUT_MS:10000}
   vision:
     # 图片理解（可选）：开启后，图片型文档会先由视觉模型转成文本描述再入库，
     # 从而能被检索到；未开启时图片文档会解析为空文本（启动与上传时均有日志提示）。
@@ -141,6 +150,10 @@ app:
       candidate-multiplier: 3   # 各检索通道按 topK×N 召回候选，再进 RRF 融合与加权打分；配 <1 时按 topK 处理
       semantic-weight: 0.75
       lexical-weight: 0.25
+      # cross-encoder 精排开关：开启后用重排模型的打分替代向量 cosine 启发式作为语义分量，
+      # 需同时配置上方 ai.rerank.*（模型不可用或调用失败时自动降级为启发式）
+      cross-encoder:
+        enabled: ${APP_RAG_CROSS_ENCODER_ENABLED:false}
   eval:
     enabled: ${APP_EVAL_ENABLED:false}
     semantic-enabled: ${APP_EVAL_SEMANTIC_ENABLED:false}

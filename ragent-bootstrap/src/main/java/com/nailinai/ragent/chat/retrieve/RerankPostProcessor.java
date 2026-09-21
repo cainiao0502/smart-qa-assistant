@@ -1,6 +1,10 @@
 package com.nailinai.ragent.chat.retrieve;
 
 import com.nailinai.ragent.entity.DocumentChunk;
+import com.nailinai.ragent.infra.rerank.RerankClient;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Component;
 import org.springframework.util.StringUtils;
@@ -9,6 +13,7 @@ import java.util.Comparator;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Locale;
+import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
 import java.util.DoubleSummaryStatistics;
@@ -18,6 +23,7 @@ import java.util.stream.Collectors;
 
 @Component
 public class RerankPostProcessor implements SearchPostProcessor {
+    private static final Logger log = LoggerFactory.getLogger(RerankPostProcessor.class);
 
     private static final Pattern TOKEN_PATTERN = Pattern.compile("[\\p{IsHan}]|[a-z0-9]+");
     private static final int RRF_K = 60;
@@ -25,14 +31,27 @@ public class RerankPostProcessor implements SearchPostProcessor {
     private final boolean enabled;
     private final double semanticWeight;
     private final double lexicalWeight;
+    private final boolean crossEncoderEnabled;
 
     /** RRF 排名分量权重 = 1 - semanticWeight - lexicalWeight，恒 >= 0 */
+    /** RRF 排名分量权重 = 1 - semanticWeight - lexicalWeight，恒 >= 0 */
     private final double rrfWeight;
+    /** 可选的 cross-encoder 客户端：未启用/未配置时为 null，走启发式重排 */
+    private RerankClient rerankClient;
 
     public RerankPostProcessor(@Value("${app.rag.rerank.enabled:true}") boolean enabled,
                                @Value("${app.rag.rerank.semantic-weight:0.75}") double semanticWeight,
                                @Value("${app.rag.rerank.lexical-weight:0.25}") double lexicalWeight) {
+        this(enabled, semanticWeight, lexicalWeight, false);
+    }
+
+    @Autowired
+    public RerankPostProcessor(@Value("${app.rag.rerank.enabled:true}") boolean enabled,
+                               @Value("${app.rag.rerank.semantic-weight:0.75}") double semanticWeight,
+                               @Value("${app.rag.rerank.lexical-weight:0.25}") double lexicalWeight,
+                               @Value("${app.rag.rerank.cross-encoder.enabled:false}") boolean crossEncoderEnabled) {
         this.enabled = enabled;
+        this.crossEncoderEnabled = crossEncoderEnabled;
         double semantic = normalizeWeight(semanticWeight);
         double lexical = normalizeWeight(lexicalWeight);
         // 三路权重之和必须为 1 且每路 >= 0：旧实现只各自 clamp [0,1]，
@@ -46,6 +65,12 @@ public class RerankPostProcessor implements SearchPostProcessor {
         this.semanticWeight = semantic;
         this.lexicalWeight = lexical;
         this.rrfWeight = 1.0 - semantic - lexical;
+    }
+
+    /** 注入可选的 cross-encoder 客户端（ai.rerank.* 未配置时该 bean 为 unavailable 实现） */
+    @Autowired(required = false)
+    public void setRerankClient(RerankClient rerankClient) {
+        this.rerankClient = rerankClient;
     }
 
     @Override
@@ -73,20 +98,30 @@ public class RerankPostProcessor implements SearchPostProcessor {
                 .mapToDouble(Double::doubleValue)
                 .summaryStatistics();
 
-        return inputs.stream()
-                .peek(result -> {
-                    DocumentChunk chunk = result.chunk();
-                    double semanticScore = normalizedSemanticScore(result, semanticStats);
-                    // 词法分量归一路径：computeLexicalScore 是命中 token 占比，天然 ∈ [0,1]，无需再归一。
-                    double lexicalScore = computeLexicalScore(queryTokens, chunk);
-                    double rrfScore = computeRrfScore(result, inputs);
-                    // 三路权重均 >= 0 且和为 1（构造器已保证），RRF 只加不减，不再惩罚共同命中。
-                    double rerankScore = semanticScore * semanticWeight
-                            + lexicalScore * lexicalWeight
-                            + rrfScore * rrfWeight;
-                    chunk.setRerankScore(rerankScore);
-                    chunk.setHitReason(buildHitReason(chunk, context, lexicalScore, result.channel()));
-                })
+        // cross-encoder 精排：配置开启且客户端可用时，用「query+候选文本」成对打分替代
+        // 向量 cosine 启发式作为语义分量来源（对所有通道统一适用，不再只有向量通道有语义证据）。
+        // 调用失败/超时自动降级回启发式，绝不阻塞检索主链路。
+        Map<Integer, Double> crossEncoderScores = tryCrossEncoderRerank(inputs, context);
+
+        List<SearchResult> inputsList = List.copyOf(inputs);
+        for (int index = 0; index < inputsList.size(); index++) {
+            SearchResult result = inputsList.get(index);
+            DocumentChunk chunk = result.chunk();
+            double semanticScore = crossEncoderScores != null
+                    ? crossEncoderScores.getOrDefault(index, 0.0)
+                    : normalizedSemanticScore(result, semanticStats);
+            // 词法分量归一路径：computeLexicalScore 是命中 token 占比，天然 ∈ [0,1]，无需再归一。
+            double lexicalScore = computeLexicalScore(queryTokens, chunk);
+            double rrfScore = computeRrfScore(result, inputs);
+            // 三路权重均 >= 0 且和为 1（构造器已保证），RRF 只加不减，不再惩罚共同命中。
+            double rerankScore = semanticScore * semanticWeight
+                    + lexicalScore * lexicalWeight
+                    + rrfScore * rrfWeight;
+            chunk.setRerankScore(rerankScore);
+            chunk.setHitReason(buildHitReason(chunk, context, lexicalScore, result.channel()));
+        }
+
+        return inputsList.stream()
                 .sorted(Comparator
                         .comparing(SearchResult::chunk,
                                 Comparator.comparing(DocumentChunk::getRerankScore,
@@ -94,6 +129,39 @@ public class RerankPostProcessor implements SearchPostProcessor {
                         .thenComparing(SearchResult::rawScore, Comparator.reverseOrder()))
                 .limit(context.topK())
                 .toList();
+    }
+
+    /**
+     * 调用 cross-encoder 重排模型给候选打分。
+     *
+     * @return index → 相关度分（bge-reranker 的 sigmoid 输出，∈[0,1]）；不可用或失败返回 null（走启发式）
+     */
+    private Map<Integer, Double> tryCrossEncoderRerank(List<SearchResult> inputs, SearchContext context) {
+        if (!crossEncoderEnabled || rerankClient == null || !rerankClient.isAvailable() || inputs.size() < 2) {
+            return null;
+        }
+        List<String> documents = inputs.stream()
+                .map(result -> {
+                    DocumentChunk chunk = result.chunk();
+                    String name = chunk.getDocumentName() == null ? "" : chunk.getDocumentName() + "\n";
+                    return name + chunk.getChunkText();
+                })
+                .toList();
+        try {
+            long start = System.currentTimeMillis();
+            List<RerankClient.RerankResult> results =
+                    rerankClient.rerank(context.effectiveQuery(), documents, inputs.size());
+            Map<Integer, Double> scores = new java.util.HashMap<>();
+            for (RerankClient.RerankResult result : results) {
+                scores.put(result.index(), result.score());
+            }
+            log.info("cross-encoder rerank applied: provider={}, candidates={}, took={}ms",
+                    rerankClient.name(), inputs.size(), System.currentTimeMillis() - start);
+            return scores;
+        } catch (Exception ex) {
+            log.warn("cross-encoder rerank failed, falling back to heuristic rerank: {}", ex.getMessage());
+            return null;
+        }
     }
 
     /**

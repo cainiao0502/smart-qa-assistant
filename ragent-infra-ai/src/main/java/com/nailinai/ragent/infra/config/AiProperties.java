@@ -11,6 +11,7 @@ public class AiProperties {
     private ChatCandidates chat = new ChatCandidates();
     private EmbeddingCandidates embedding = new EmbeddingCandidates();
     private Vision vision = new Vision();
+    private Rerank rerank = new Rerank();
     private Retry retry = new Retry();
     private Timeout timeout = new Timeout();
 
@@ -36,6 +37,14 @@ public class AiProperties {
 
     public void setVision(Vision vision) {
         this.vision = vision;
+    }
+
+    public Rerank getRerank() {
+        return rerank;
+    }
+
+    public void setRerank(Rerank rerank) {
+        this.rerank = rerank;
     }
 
     public Retry getRetry() {
@@ -129,6 +138,67 @@ public class AiProperties {
 
         public void setModel(String model) {
             this.model = model;
+        }
+    }
+
+    /**
+     * 重排序模型配置（可选能力）：cross-encoder 精排。
+     * 未配置或 enabled=false 时检索链路自动降级为启发式重排（RRF + 加权）。
+     */
+    public static class Rerank {
+        private boolean enabled = false;
+        private String provider = "siliconflow";
+        private String baseUrl = "https://api.siliconflow.cn/v1";
+        private String apiKey;
+        private String model = "BAAI/bge-reranker-v2-m3";
+        private long timeoutMs = 10_000;
+
+        public boolean isEnabled() {
+            return enabled;
+        }
+
+        public void setEnabled(boolean enabled) {
+            this.enabled = enabled;
+        }
+
+        public String getProvider() {
+            return provider;
+        }
+
+        public void setProvider(String provider) {
+            this.provider = provider;
+        }
+
+        public String getBaseUrl() {
+            return baseUrl;
+        }
+
+        public void setBaseUrl(String baseUrl) {
+            this.baseUrl = baseUrl;
+        }
+
+        public String getApiKey() {
+            return apiKey;
+        }
+
+        public void setApiKey(String apiKey) {
+            this.apiKey = apiKey;
+        }
+
+        public String getModel() {
+            return model;
+        }
+
+        public void setModel(String model) {
+            this.model = model;
+        }
+
+        public long getTimeoutMs() {
+            return timeoutMs;
+        }
+
+        public void setTimeoutMs(long timeoutMs) {
+            this.timeoutMs = timeoutMs;
         }
     }
 

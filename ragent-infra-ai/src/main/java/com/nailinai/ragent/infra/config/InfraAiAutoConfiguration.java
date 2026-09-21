@@ -5,6 +5,9 @@ import com.nailinai.ragent.infra.chat.ChatClient;
 import com.nailinai.ragent.infra.chat.OpenAICompatibleChatClient;
 import com.nailinai.ragent.infra.embedding.CachingEmbeddingClient;
 import com.nailinai.ragent.infra.embedding.EmbeddingClient;
+import com.nailinai.ragent.infra.rerank.RerankClient;
+import com.nailinai.ragent.infra.rerank.SiliconFlowRerankClient;
+
 import com.nailinai.ragent.infra.embedding.OpenAICompatibleEmbeddingClient;
 import com.nailinai.ragent.infra.router.ModelHealthStore;
 import com.nailinai.ragent.infra.router.ModelRouter;
@@ -115,6 +118,31 @@ public class InfraAiAutoConfiguration {
         );
         log.info("Registered vision model: provider={}, model={}", vision.getProvider(), vision.getModel());
         return new OpenAICompatibleVisionClient(visionChatClient);
+    }
+
+    /**
+     * 重排序模型客户端（可选能力）。
+     *
+     * <p>未配置时返回「不可用」实现，RerankPostProcessor 检测到后自动退回
+     * 启发式重排（RRF + 词法/语义加权），不阻塞检索主链路。
+     */
+    @Bean
+    @ConditionalOnMissingBean
+    public RerankClient rerankClient(AiProperties properties, ObjectMapper objectMapper) {
+        AiProperties.Rerank rerank = properties.getRerank();
+        if (!rerank.isEnabled() || isBlank(rerank.getBaseUrl()) || isBlank(rerank.getApiKey())) {
+            log.info("Rerank model is not configured; retrieval falls back to heuristic rerank. "
+                    + "Set ai.rerank.* to enable cross-encoder rerank.");
+            return RerankClient.unavailable();
+        }
+        log.info("Registered rerank model: provider={}, model={}", rerank.getProvider(), rerank.getModel());
+        return new SiliconFlowRerankClient(
+                rerank.getBaseUrl(),
+                rerank.getApiKey(),
+                rerank.getModel(),
+                rerank.getTimeoutMs(),
+                objectMapper
+        );
     }
 
     private boolean isBlank(String value) {
