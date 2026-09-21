@@ -221,19 +221,13 @@ APP_EVAL_ENABLED=true mvn -pl ragent-bootstrap -am spring-boot:run
 - 查询改写/重排四组合消融的文档级 recall@k / precision@k 对比；
 - 若再开启 `APP_EVAL_SEMANTIC_ENABLED=true`，追加语义级评估：对每条查询基于检索切片生成回答，用 LLM-as-judge 打分 faithfulness（忠实度/幻觉程度）与 answerRelevancy（相关性）并输出均值。
 
-## 📊 当前完成度
+## 📊 适用场景
 
-当前更偏向"功能完整、主链路有测试、持续打磨稳定性"的阶段 ✅，可作为以下场景的技术底座：
+可作为以下场景的技术底座：
 
 - 🏢 企业内部知识库问答（权限模型可按用户/部门维度扩展）
 - 🔌 Agent 工具接入平台（MCP 外部工具 + 动作级人工审批）
 - 📚 带评测回归的 RAG 应用（检索消融实验 + Agent 轨迹评测）
-
-后续规划 📈（按优先级）：
-
-1. 📸 增加 README 演示截图
-2. 📊 补一页接口/模块时序图
-3. 🧪 继续完善聊天主链路和 Agent Runtime 的异常场景测试
 
 ## ⚠️ 说明
 
