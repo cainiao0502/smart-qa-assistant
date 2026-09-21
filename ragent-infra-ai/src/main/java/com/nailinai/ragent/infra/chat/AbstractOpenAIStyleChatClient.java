@@ -12,8 +12,11 @@ import org.springframework.web.client.RestClientResponseException;
 
 import java.io.BufferedReader;
 import java.io.IOException;
+import java.io.InterruptedIOException;
 import java.io.InputStream;
 import java.io.InputStreamReader;
+import org.springframework.http.client.JdkClientHttpRequestFactory;
+
 import java.net.InetSocketAddress;
 import java.net.ProxySelector;
 import java.net.URI;
@@ -51,18 +54,23 @@ public abstract class AbstractOpenAIStyleChatClient implements ChatClient {
                                             long retryBackoffMs,
                                             long streamTimeoutMs,
                                             ObjectMapper objectMapper) {
-        this.restClient = RestClient.builder().baseUrl(baseUrl).build();
         HttpClient.Builder httpBuilder = HttpClient.newBuilder()
                 .connectTimeout(Duration.ofSeconds(30));
         configureProxy(httpBuilder, baseUrl);
         this.httpClient = httpBuilder.build();
+        this.streamTimeoutMs = Math.max(10_000, streamTimeoutMs);
+        // 非流式 chat() 走 RestClient，默认没有任何读超时——上游挂起时会无限阻塞
+        // 调用线程（agent 循环的 planner 超时只能"放弃等待"，无法真正断开连接）。
+        // 这里复用 streamTimeoutMs 作为读超时，与超时守卫形成双层边界。
+        JdkClientHttpRequestFactory requestFactory = new JdkClientHttpRequestFactory(httpClient);
+        requestFactory.setReadTimeout(Duration.ofMillis(this.streamTimeoutMs));
+        this.restClient = RestClient.builder().baseUrl(baseUrl).requestFactory(requestFactory).build();
         this.objectMapper = objectMapper;
         this.baseUrl = baseUrl;
         this.apiKey = apiKey;
         this.model = model;
         this.maxAttempts = Math.max(1, maxAttempts);
         this.retryBackoffMs = Math.max(0, retryBackoffMs);
-        this.streamTimeoutMs = Math.max(10_000, streamTimeoutMs);
     }
 
     @Override
@@ -118,7 +126,36 @@ public abstract class AbstractOpenAIStyleChatClient implements ChatClient {
     @Override
     public void streamChat(LlmRequest request, StreamCallback callback) {
         IllegalStateException lastException = null;
+        // 跨 attempt 跟踪是否已向底层 callback 推送过任何事件（正文或思考流）。
+        // 只统计 onContent 会漏掉「先推了 reasoning 再失败」的流：此时整单重试会把
+        // 相同的思考内容再推一遍。这里用包装回调把 onReasoning/onContent 都计入。
+        java.util.concurrent.atomic.AtomicBoolean anyEmitted = new java.util.concurrent.atomic.AtomicBoolean(false);
+        StreamCallback trackedCallback = new StreamCallback() {
+            @Override
+            public void onReasoning(String delta) {
+                anyEmitted.set(true);
+                callback.onReasoning(delta);
+            }
+
+            @Override
+            public void onContent(String delta) {
+                anyEmitted.set(true);
+                callback.onContent(delta);
+            }
+
+            @Override
+            public void onComplete() {
+                callback.onComplete();
+            }
+
+            @Override
+            public void onError(Throwable ex) {
+                callback.onError(ex);
+            }
+        };
         for (int attempt = 1; attempt <= maxAttempts; attempt++) {
+            // 本 attempt 是否拿到过正文内容（空白流允许重试，但 anyEmitted 已拦截重复推送）
+            boolean receivedContent = false;
             try {
                 HttpRequest httpRequest = HttpRequest.newBuilder()
                         .uri(URI.create(buildChatCompletionUrl()))
@@ -148,10 +185,8 @@ public abstract class AbstractOpenAIStyleChatClient implements ChatClient {
                     sleepBeforeRetry(attempt);
                     continue;
                 }
-
-                boolean receivedContent;
                 try (InputStream body = response.body()) {
-                    receivedContent = consumeStream(body, callback);
+                    receivedContent = consumeStream(body, trackedCallback);
                 }
                 if (receivedContent) {
                     callback.onComplete();
@@ -170,6 +205,13 @@ public abstract class AbstractOpenAIStyleChatClient implements ChatClient {
                 lastException = new IllegalStateException("failed to read chat stream response", ex);
                 log.warn("LLM stream IO error on attempt {}/{}, provider={}, model={}, message={}",
                         attempt, maxAttempts, name(), model, ex.getMessage());
+                // 已向用户推送过部分 delta 时禁止重试：重试会从头发起请求并把完整
+                // 输出追加在已推送内容之后，造成重复。只有完全没输出过的失败才允许重试。
+                if (anyEmitted.get()) {
+                    callback.onError(new IllegalStateException(
+                            "failed to read chat stream response after emitting partial content", ex));
+                    return;
+                }
                 if (attempt >= maxAttempts) {
                     callback.onError(lastException);
                     return;
@@ -329,8 +371,16 @@ public abstract class AbstractOpenAIStyleChatClient implements ChatClient {
         StringBuilder aggregatedContent = new StringBuilder();
         StringBuilder aggregatedReasoning = new StringBuilder();
         try (BufferedReader reader = new BufferedReader(new InputStreamReader(inputStream, StandardCharsets.UTF_8))) {
+            // HttpRequest.timeout 只约束到「收到响应头」为止；readLine 会无限阻塞
+            // 等待行数据，上游挂起（建立连接后不再发数据）时连接与线程被无限占用。
+            // 改为 ready() 轮询读取：无数据时 sleep 50ms 并检查空闲 deadline
+            // （空闲上限复用 streamTimeoutMs），空闲超时抛 InterruptedIOException 走
+            // 既有 IOException 语义。[DONE] 处理与 UTF-8 读取行为保持不变。
             String line;
-            while ((line = reader.readLine()) != null) {
+            long idleDeadline = System.currentTimeMillis() + streamTimeoutMs;
+            while ((line = readLineWithIdleTimeout(reader, idleDeadline)) != null) {
+                // 收到完整一行即视为流活跃，重置空闲计时
+                idleDeadline = System.currentTimeMillis() + streamTimeoutMs;
                 if (!line.startsWith("data:")) {
                     continue;
                 }
@@ -354,6 +404,49 @@ public abstract class AbstractOpenAIStyleChatClient implements ChatClient {
             }
         }
         return receivedContent;
+    }
+
+    /**
+     * 带空闲超时的行读取，语义与 {@link BufferedReader#readLine()} 一致：
+     * 返回一行内容（不含行终止符），流结束时返回 null（含最后无换行符的残余行）。
+     *
+     * <p>ready() 为 false 时 sleep 50ms 并检查空闲 deadline，超时抛出
+     * {@link InterruptedIOException}；线程被中断时恢复中断标志并同样抛出
+     * {@link InterruptedIOException} 正确退出。ready() 为 true 时逐字符读取——
+     * 此时单字符 read 不会阻塞，整行拼接期间也不会被不发数据的上游无限挂起。
+     */
+    private String readLineWithIdleTimeout(BufferedReader reader, long idleDeadline) throws IOException {
+        StringBuilder line = new StringBuilder();
+        while (true) {
+            if (Thread.currentThread().isInterrupted()) {
+                throw new InterruptedIOException("chat stream read interrupted");
+            }
+            if (System.currentTimeMillis() > idleDeadline) {
+                throw new InterruptedIOException("chat stream idle timeout after " + streamTimeoutMs + " ms");
+            }
+            if (reader.ready()) {
+                int ch = reader.read();
+                if (ch < 0) {
+                    // EOF：与 readLine 一致，无换行结尾的残余行也要返回
+                    return line.length() == 0 ? null : line.toString();
+                }
+                if (ch == '\n') {
+                    int last = line.length() - 1;
+                    if (last >= 0 && line.charAt(last) == '\r') {
+                        line.setLength(last);
+                    }
+                    return line.toString();
+                }
+                line.append((char) ch);
+            } else {
+                try {
+                    Thread.sleep(50);
+                } catch (InterruptedException ex) {
+                    Thread.currentThread().interrupt();
+                    throw new InterruptedIOException("chat stream read interrupted");
+                }
+            }
+        }
     }
 
     protected StreamDelta parseStreamContent(String payload, StringBuilder aggregatedReasoning, StringBuilder aggregatedContent) {
