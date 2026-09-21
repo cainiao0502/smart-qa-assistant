@@ -154,7 +154,10 @@ class AgentRuntimeServiceTest {
         assertThat(result.getToolCalls().get(0).getSummary())
                 .contains("does not exist")
                 .contains("kb_lookup");
-        assertThat(result.getRun().getStatus()).isEqualTo("PARTIAL");
+        // 终态语义（2026-09 收紧）：未知工具失败不算硬失败——它只是模型走错了路，
+        // 模型随后改用可用工具并正常 finish 时，run 状态应为 SUCCESS 而非 PARTIAL。
+        // 真实的工具执行失败/超时才保留 PARTIAL。
+        assertThat(result.getRun().getStatus()).isEqualTo("SUCCESS");
     }
 
     @Test
