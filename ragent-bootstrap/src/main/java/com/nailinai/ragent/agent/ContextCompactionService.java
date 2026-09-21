@@ -82,8 +82,22 @@ public class ContextCompactionService implements AgentTurnHook {
         this.summaryMaxTokens = Math.max(256, summaryMaxTokens);
     }
 
+    /**
+     * 最近一次 beforeTurn 期间摘要调用消耗的用量；本轮未做压缩则为 null。
+     * 用 ThreadLocal 而非实例字段：本服务是单例，beforeTurn 与 lastTurnUsage 的读取
+     * 都发生在同一条 run 线程上，实例字段会被并发 run 互相覆盖造成用量错账。
+     */
+    private final ThreadLocal<AgentTurnHook.TokenUsageReport> lastTurnUsage = new ThreadLocal<>();
+
+    @Override
+    public AgentTurnHook.TokenUsageReport lastTurnUsage() {
+        return lastTurnUsage.get();
+    }
+
     @Override
     public List<AgentStep> beforeTurn(List<AgentStep> priorSteps) {
+        // 用量按「本轮」口径上报：进入本轮先清零，运行时在 beforeTurn 返回后立刻读取
+        lastTurnUsage.remove();
         if (priorSteps == null || priorSteps.size() <= keepRecentSteps) {
             return null;
         }
@@ -186,6 +200,13 @@ public class ContextCompactionService implements AgentTurnHook {
                 summaryMaxTokens
         );
         ChatResponse response = chatClient.chat(request);
+        // 记录本次摘要调用的真实用量：即使内容为空（随后抛异常降级），token 也已经消耗
+        if (response != null && response.usage() != null && !response.usage().isEmpty()) {
+            var usage = response.usage();
+        lastTurnUsage.set(new AgentTurnHook.TokenUsageReport(1,
+                    usage.inputTokens(), usage.outputTokens(),
+                    usage.cachedTokens(), usage.reasoningTokens()));
+        }
         if (response == null || !response.hasContent() || !StringUtils.hasText(response.content())) {
             throw new IllegalStateException("Summarization returned empty content");
         }

@@ -46,4 +46,29 @@ public interface AgentTurnHook {
     default ToolGateDecision beforeToolCall(ToolGateContext context) {
         return ToolGateDecision.allow();
     }
+
+    /**
+     * 上一次 {@link #beforeTurn} 期间钩子自身消耗的 LLM 用量（如上下文压缩的摘要调用）。
+     *
+     * <p>约定：运行时在每次 {@code beforeTurn} 之后立刻读取一次并计入 run 的用量统计，
+     * 因此实现方只需在 beforeTurn 内记录本次调用产生的用量；本轮钩子没有额外
+     * LLM 调用时返回 {@code null} 表示「无可计入量」。字段口径与
+     * {@link com.nailinai.ragent.agent.dto.RunUsage} 对齐，便于运行时直接累加。</p>
+     */
+    default TokenUsageReport lastTurnUsage() {
+        return null;
+    }
+
+    /**
+     * 钩子侧 LLM 用量上报（不含主循环 Planner 调用）。
+     *
+     * @param llmCalls        钩子内发生的 LLM 调用次数
+     * @param inputTokens     累计输入 token（含缓存命中部分）
+     * @param outputTokens    累计输出 token
+     * @param cachedTokens    输入中命中 prompt 缓存的部分
+     * @param reasoningTokens 输出中属于思考（reasoning）的部分
+     */
+    record TokenUsageReport(int llmCalls, int inputTokens, int outputTokens,
+                            int cachedTokens, int reasoningTokens) {
+    }
 }

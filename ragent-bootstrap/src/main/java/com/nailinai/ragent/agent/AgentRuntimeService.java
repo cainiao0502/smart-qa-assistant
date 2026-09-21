@@ -28,6 +28,8 @@ import org.springframework.util.StringUtils;
 
 import java.time.LocalDateTime;
 import java.util.ArrayList;
+import jakarta.annotation.PreDestroy;
+
 import java.util.LinkedHashSet;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -36,7 +38,14 @@ import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
 import java.util.UUID;
+import java.util.concurrent.ExecutionException;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.Future;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.TimeoutException;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.function.Supplier;
 import java.util.stream.Collectors;
 
 @Service
@@ -56,6 +65,21 @@ public class AgentRuntimeService {
     private int maxGuardBlocksPerRun = 2;
     /** 授权类拦截上限，默认 2；见 {@link #setMaxApprovalBlocksPerRun(int)} */
     private int maxApprovalBlocksPerRun = 2;
+
+    /**
+     * 超时守卫专用执行器：planner 决策与工具执行在这里限时运行。
+     *
+     * <p>历史缺陷：plannerTimeoutMs / toolTimeoutMs 曾只是注入而从未生效，一次挂死的
+     * LLM 请求或 MCP 调用会无限阻塞循环并占住会话锁。用虚拟线程逐任务提交 +
+     * Future.get(限时) 实现真正的超时边界；超时后 cancel(true) 尽力中断被阻塞的调用，
+     * 底层 HTTP 读超时（见 AbstractOpenAIStyleChatClient）负责最终释放资源。
+     */
+    private final ExecutorService timeoutExecutor = Executors.newVirtualThreadPerTaskExecutor();
+
+    @PreDestroy
+    public void shutdownTimeoutExecutor() {
+        timeoutExecutor.shutdownNow();
+    }
 
     public AgentRuntimeService(AgentPlannerService agentPlannerService,
                                ToolExecutorRegistry toolExecutorRegistry,
@@ -145,6 +169,9 @@ public class AgentRuntimeService {
         String answerMode = "rag";
         String finalInstruction = null;
         String terminalStatus = "SUCCESS";
+        // 是否发生过「真实工具执行失败/超时」：循环正常收尾时决定 run 终态是 SUCCESS 还是 PARTIAL。
+        // 未知工具与守卫拦截不置位——它们是引导模型自我纠正的信号，不代表本轮答案质量受损。
+        boolean anyHardFailure = false;
         String currentActionKey = null;
         Set<String> completedTaskKeys = new LinkedHashSet<>();
         // 有计划 ≠ 必须逐个执行：信息可能一次检索就被覆盖。跳过是正当行为，但必须留痕，
@@ -158,6 +185,7 @@ public class AgentRuntimeService {
         // 已用尽检索预算的任务：既不再允许调工具，也不再作为本轮推进目标
         Set<String> budgetExhaustedTaskKeys = new LinkedHashSet<>();
 
+        try {
         for (int stepIndex = 1; stepIndex <= maxSteps; stepIndex++) {
             if (isCancelled(cancelSignal, terminalStatus)) {
                 terminalStatus = "CANCELLED";
@@ -173,7 +201,21 @@ public class AgentRuntimeService {
                 if (hooked != null) {
                     plannerView = hooked;
                 }
+                // 钩子（如上下文压缩）可能额外消耗了一次 LLM 调用：用量并入 run 统计，
+                // 否则 RunUsage 只算 Planner 会漏计压缩成本。
+                AgentTurnHook.TokenUsageReport hookUsage = hook.lastTurnUsage();
+                if (hookUsage != null) {
+                    llmCalls += hookUsage.llmCalls();
+                    inputTokens += hookUsage.inputTokens();
+                    outputTokens += hookUsage.outputTokens();
+                    cachedTokens += hookUsage.cachedTokens();
+                    reasoningTokens += hookUsage.reasoningTokens();
+                }
             }
+            // 钩子视图里新增的合成步（压缩摘要步）回写真实 steps 并落库：
+            // 否则下一轮钩子收到的候选集合不含上次摘要，ContextCompactionService 的
+            // 防重与增量合并分支沦为死代码，同一批早期步骤会被每轮重新全量摘要。
+            syncSyntheticSteps(plannerView, steps, initialRun.getRunId(), listener);
             PlannerDecision decision = decideNextAction(
                     request,
                     history,
@@ -393,7 +435,11 @@ public class AgentRuntimeService {
                         withTaskKey(normalizedArguments, currentActionKey),
                         decision.getTool(), decision.getTool(), "unknown",
                         failureType, observation, 0L, listener, steps, toolCalls);
-                terminalStatus = "PARTIAL";
+                // 未知工具虽未真实执行，也要计入当前任务的调用预算：
+                // 否则模型反复请求不存在的工具会把 maxSteps 全部耗光，而不触发每任务预算守卫
+                if (StringUtils.hasText(currentActionKey)) {
+                    toolCallsPerTask.merge(currentActionKey, 1, Integer::sum);
+                }
                 listener.onPlanUpdated(initialRun.getRunId(), plan, currentActionKey,
                         List.copyOf(completedTaskKeys), List.copyOf(skippedTaskKeys), List.copyOf(unresolvedTaskKeys));
                 continue;
@@ -418,14 +464,15 @@ public class AgentRuntimeService {
             listener.onStepStarted(runningStep);
 
             try {
-                toolResult = executor.execute(
-                        normalizedArguments,
-                        ToolContext.builder()
-                                .request(request)
-                                .history(history)
-                                .retrievedChunks(retrievalResult.getChunks())
-                                .build()
-                );
+                toolResult = callWithTimeout(toolTimeoutMs, "tool \"" + executor.getToolName() + "\" execution",
+                        () -> executor.execute(
+                                normalizedArguments,
+                                ToolContext.builder()
+                                        .request(request)
+                                        .history(history)
+                                        .retrievedChunks(retrievalResult.getChunks())
+                                        .build()
+                        ));
                 observationSummary = summaryFrom(toolResult.getObservation(), toolResult.getSummary());
                 if (toolResult.getTrace() != null) {
                     toolTrace = toolResult.getTrace();
@@ -446,7 +493,8 @@ public class AgentRuntimeService {
                 status = "FAILED";
                 observationSummary = failureType.toObservation(
                         executor.getToolName(), rootMessage(exception), availableToolNames());
-                terminalStatus = "PARTIAL";
+                // 只标记「发生过硬失败」，终态在循环结束后按收尾方式统一裁决
+                anyHardFailure = true;
                 toolTrace = ToolCallTraceResponse.builder()
                         .toolName(executor.getToolName())
                         .displayName(executor.getDisplayName())
@@ -487,6 +535,30 @@ public class AgentRuntimeService {
             }
         }
 
+        } catch (Exception loopException) {
+            // 兜底：循环内任何未捕获异常（planner 超时、工具超时、DB 故障等）都不能把
+            // run 永久留在 RUNNING。先落 FAILED 终态，再向上抛给聊天链路做用户侧回写。
+            log.error("Agent loop failed: runId={}, completedSteps={}",
+                    initialRun.getRunId(), steps.size(), loopException);
+            agentRunStore.completeRun(initialRun.getRunId(), "FAILED", null);
+            if (loopException instanceof RuntimeException runtimeException) {
+                throw runtimeException;
+            }
+            throw new IllegalStateException(loopException);
+        }
+
+        // 终态裁决：显式成功收尾（finish / respond_with_gap）时，run 状态只反映真实失败——
+        // 否则循环早期一次工具失败会把最终正常收尾的 run 永远钉在 PARTIAL，与事实不符。
+        // 非正常收尾路径（步数耗尽、预算/授权兜底、取消）维持循环内已设置的终态不变。
+        boolean finishedCleanly = steps.stream().anyMatch(step ->
+                ("finish".equalsIgnoreCase(step.getStepType())
+                        || "respond_with_gap".equalsIgnoreCase(step.getStepType()))
+                        && "SUCCESS".equalsIgnoreCase(step.getStatus()));
+        if (finishedCleanly) {
+            terminalStatus = anyHardFailure ? "PARTIAL" : "SUCCESS";
+        } else if (anyHardFailure && "SUCCESS".equals(terminalStatus)) {
+            terminalStatus = "PARTIAL";
+        }
         long executedActionCount = steps.stream()
                 .filter(step -> !"plan".equalsIgnoreCase(step.getStepType()))
                 .count();
@@ -526,6 +598,49 @@ public class AgentRuntimeService {
                 .build();
     }
 
+    /**
+     * 把钩子视图相对真实 steps 新增的合成步（典型为压缩摘要步）追加回真实 steps，
+     * 持久化到 agent_step 并通知监听器。
+     *
+     * <p>用对象同一性（{@code ==}）判重而非 equals：钩子返回视图中的保留步骤就是
+     * 真实 steps 里的同一批对象，只有钩子新建的合成步不在其中。回写后，下一轮
+     * 钩子才能在候选集合里看到上次摘要，从而触发防重与增量合并而不是重新全量摘要。</p>
+     *
+     * <p>step_index 说明：agent_step 表对 (run_id, step_index) 无唯一约束（查询按
+     * step_index ASC, id ASC 排序），合成步沿用钩子给的索引（复用被压缩步骤的索引）
+     * 不会插入失败，也刻意不占用未来的循环步号，避免与后续真实步骤冲突。</p>
+     */
+    private void syncSyntheticSteps(List<AgentStep> plannerView,
+                                    List<AgentStep> steps,
+                                    String runId,
+                                    AgentRuntimeListener listener) {
+        if (plannerView == steps || plannerView == null) {
+            return;
+        }
+        for (AgentStep synthetic : plannerView) {
+            boolean alreadyTracked = false;
+            for (AgentStep real : steps) {
+                if (real == synthetic) {
+                    alreadyTracked = true;
+                    break;
+                }
+            }
+            if (alreadyTracked) {
+                continue;
+            }
+            try {
+                synthetic.setRunId(runId);
+                steps.add(synthetic);
+                agentRunStore.appendStep(synthetic);
+                listener.onStepCompleted(synthetic);
+            } catch (Exception persistException) {
+                // 合成步回写失败只影响下一轮增量摘要的效率（退化为重新全量摘要），不阻断主循环
+                log.warn("Failed to persist synthetic hook step (runId={}): {}",
+                        runId, persistException.getMessage());
+            }
+        }
+    }
+
     private Map<String, Object> withTaskKey(Map<String, Object> arguments, String taskKey) {
         if (!StringUtils.hasText(taskKey)) {
             return arguments;
@@ -545,7 +660,8 @@ public class AgentRuntimeService {
         PlannerDecision lastDecision = null;
         List<AgentPlanItem> lastActivePlan = existingPlan;
         for (int guardAttempt = 0; guardAttempt < 2; guardAttempt++) {
-            PlannerDecision decision = agentPlannerService.decide(request, history, retrievalResult.getChunks(), workingSteps);
+            PlannerDecision decision = callWithTimeout(plannerTimeoutMs, "planner decision",
+                    () -> agentPlannerService.decide(request, history, retrievalResult.getChunks(), workingSteps));
             lastDecision = decision;
             if (decision == null) {
                 return null;
@@ -558,6 +674,34 @@ public class AgentRuntimeService {
             workingSteps.add(buildPlannerGuardStep(workingSteps, activePlan, completedTaskKeys));
         }
         return buildForcedContinuationDecision(lastDecision, lastActivePlan, completedTaskKeys);
+    }
+
+    /**
+     * 在超时守卫执行器上运行任务并限时等待结果。
+     *
+     * <p>超时异常消息刻意包含 "timeout" 关键字：{@link #classifyFailure} 依赖消息文本
+     * 把失败归类为 {@code ToolFailureType.TIMEOUT}，从而给模型「缩小范围重试」的正确引导。
+     */
+    private <T> T callWithTimeout(long timeoutMs, String what, Supplier<T> task) {
+        Future<T> future = timeoutExecutor.submit(task::get);
+        try {
+            return future.get(timeoutMs, TimeUnit.MILLISECONDS);
+        } catch (TimeoutException ex) {
+            future.cancel(true);
+            throw new IllegalStateException(what + " timeout after " + timeoutMs + "ms", ex);
+        } catch (ExecutionException ex) {
+            Throwable cause = ex.getCause() == null ? ex : ex.getCause();
+            if (cause instanceof RuntimeException runtimeException) {
+                throw runtimeException;
+            }
+            if (cause instanceof Error error) {
+                throw error;
+            }
+            throw new IllegalStateException(cause);
+        } catch (InterruptedException ex) {
+            Thread.currentThread().interrupt();
+            throw new IllegalStateException(what + " interrupted while waiting", ex);
+        }
     }
 
     private boolean isPrematureTerminalDecision(PlannerDecision decision,
