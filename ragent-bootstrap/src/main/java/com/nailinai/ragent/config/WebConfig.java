@@ -46,7 +46,12 @@ public class WebConfig {
             @Override
             public void addInterceptors(InterceptorRegistry registry) {
                 registry.addInterceptor(rateLimitInterceptor)
-                        .addPathPatterns("/api/chat", "/api/chat/stream");
+                        .addPathPatterns("/api/chat", "/api/chat/stream",
+                                // 登录/注册是爆破入口，必须纳入限流（匿名按 IP 计数）
+                                "/api/auth/**",
+                                // 文档上传与索引：大文件 + 计费 API（DocumentController 实际路径 /api/kb/{kbId}/documents/upload、/api/documents/{docId}/index）
+                                "/api/kb/*/documents/upload",
+                                "/api/documents/*/index");
             }
         };
     }

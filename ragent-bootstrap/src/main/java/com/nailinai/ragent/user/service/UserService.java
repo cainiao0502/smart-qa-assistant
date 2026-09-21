@@ -8,6 +8,7 @@ import com.nailinai.ragent.user.dto.RegisterRequest;
 import com.nailinai.ragent.user.dto.UserInfoResponse;
 import com.nailinai.ragent.user.entity.User;
 import com.nailinai.ragent.user.mapper.UserMapper;
+import org.springframework.dao.DuplicateKeyException;
 import cn.dev33.satoken.secure.BCrypt;
 import cn.dev33.satoken.stp.StpUtil;
 import org.slf4j.Logger;
@@ -26,7 +27,12 @@ public class UserService {
         this.userMapper = userMapper;
     }
 
-    public LoginResponse register(RegisterRequest request) {
+    /**
+     * synchronized 消除「查询无用户 → 插入 admin」的 check-then-act 竞态：
+     * 空库并发注册两个用户时可能产生两个 admin。单实例内此锁足够；
+     * 多实例部署需改用 DB 侧约束（首管由迁移脚本授予）。
+     */
+    public synchronized LoginResponse register(RegisterRequest request) {
         User existing = userMapper.selectByUsername(request.getUsername());
         if (existing != null) {
             throw new BusinessException(ErrorCode.CONFLICT, "用户名已存在");
@@ -34,9 +40,17 @@ public class UserService {
         User user = new User();
         user.setUsername(request.getUsername());
         user.setPasswordHash(BCrypt.hashpw(request.getPassword()));
-        user.setRole(DEFAULT_ROLE);
-        userMapper.insert(user);
-        log.info("User registered: id={}, username={}", user.getId(), user.getUsername());
+        // 首管引导路径：库中还没有任何用户时，第一个注册者直接成为 admin，
+        // 否则系统永远产生不了管理员（isFirstUser() 此前无调用方）。
+        user.setRole(isFirstUser() ? "admin" : DEFAULT_ROLE);
+        try {
+            userMapper.insert(user);
+        } catch (DuplicateKeyException ex) {
+            // selectByUsername 检查与 insert 之间存在竞态，并发同名注册会撞 DB
+            // unique 约束抛裸异常，这里转成友好文案
+            throw new BusinessException(ErrorCode.CONFLICT, "用户名已存在");
+        }
+        log.info("User registered: id={}, username={}, role={}", user.getId(), user.getUsername(), user.getRole());
         return login(buildLoginRequest(request.getUsername(), request.getPassword()));
     }
 

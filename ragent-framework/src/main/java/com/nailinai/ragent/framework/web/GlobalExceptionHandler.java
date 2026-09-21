@@ -55,7 +55,9 @@ public class GlobalExceptionHandler {
 
     @ExceptionHandler(Exception.class)
     public Result<Void> handleException(Exception ex) {
+        // 兜底文案绝不能透传 ex.getMessage()：上游 HTTP body、服务器绝对路径、
+        // SQL 片段都可能被拼进异常消息直接返回给客户端。完整异常只进日志。
         log.error("Unhandled exception", ex);
-        return Result.failure(ErrorCode.INTERNAL_ERROR, ex.getMessage());
+        return Result.failure(ErrorCode.INTERNAL_ERROR, "服务器内部错误，请稍后再试");
     }
 }
