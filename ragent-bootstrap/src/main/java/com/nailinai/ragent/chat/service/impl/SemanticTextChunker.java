@@ -41,7 +41,15 @@ public class SemanticTextChunker implements TextChunker {
             return List.of();
         }
 
-        return mergeSegments(segments);
+        // 兜底上界：无标点的长句（base64、长 URL 等）会生成超过 chunkSize 的 segment，
+        // 直接合并会让单个 chunk 超出 embedding 的 token 上限，导致整个文档入库失败。
+        // 对超长 segment 做字符级强制切分，保证任何输出 chunk <= chunkSize。
+        List<String> bounded = new ArrayList<>(segments.size());
+        for (String segment : segments) {
+            bounded.addAll(forceSplitOversized(segment));
+        }
+
+        return mergeSegments(bounded);
     }
 
     /**
@@ -88,6 +96,58 @@ public class SemanticTextChunker implements TextChunker {
         flushSegment(current, segments);
 
         return segments;
+    }
+
+    /**
+     * 将文本拆分为最小语义单元（句子/标题/段落）。
+     * 每个 segment 是一个不可再分的语义片段。
+     */
+
+    /**
+     * 单个 segment 超过 chunkSize 时做字符级强制循环切分，保证每片 <= chunkSize。
+     * 切点尽量靠近软边界（空白/标点），找不到时按 UTF-16 代理对安全的硬切点截断，
+     * 不会把 emoji 等增补字符切成孤独代理项。
+     */
+    private List<String> forceSplitOversized(String segment) {
+        if (segment.length() <= chunkSize) {
+            return List.of(segment);
+        }
+        List<String> pieces = new ArrayList<>();
+        int start = 0;
+        while (start < segment.length()) {
+            int end = Math.min(start + chunkSize, segment.length());
+            if (end < segment.length()) {
+                end = findHardCutPoint(segment, start, end);
+            }
+            String piece = segment.substring(start, end).trim();
+            if (!piece.isEmpty()) {
+                pieces.add(piece);
+            }
+            start = end;
+        }
+        return pieces;
+    }
+
+    /**
+     * 在 (start, limit] 内从后往前找软边界切点（空白或句读标点）；
+     * 找不到则回退到 limit 处硬切，并回退避开代理对中间。
+     */
+    private int findHardCutPoint(String text, int start, int limit) {
+        for (int i = limit; i > start + 1; i--) {
+            char c = text.charAt(i - 1);
+            boolean softBoundary = Character.isWhitespace(c) || isSentenceEnd(c)
+                    || c == '，' || c == '、' || c == '；' || c == '：'
+                    || c == ',' || c == ';' || c == ':';
+            if (softBoundary && !Character.isLowSurrogate(text.charAt(i))) {
+                return i;
+            }
+        }
+        // 硬切：切点不能落在代理对中间（charAt(limit) 是低位代理时，limit-1 是其高位代理）
+        int cut = limit;
+        while (cut > start + 1 && Character.isLowSurrogate(text.charAt(cut))) {
+            cut--;
+        }
+        return cut;
     }
 
     /**

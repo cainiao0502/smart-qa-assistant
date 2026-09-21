@@ -7,6 +7,8 @@ import com.nailinai.ragent.dto.response.DocumentResponse;
 import com.nailinai.ragent.entity.Document;
 import com.nailinai.ragent.entity.DocumentChunk;
 import com.nailinai.ragent.enums.DocumentStatus;
+import com.nailinai.ragent.entity.DocumentTask;
+import com.nailinai.ragent.enums.TaskStatus;
 import com.nailinai.ragent.mapper.DocumentChunkMapper;
 import com.nailinai.ragent.mapper.DocumentMapper;
 import com.nailinai.ragent.mapper.DocumentTaskMapper;
@@ -15,6 +17,8 @@ import com.nailinai.ragent.user.context.UserIdHolder;
 import com.nailinai.ragent.chat.service.DocumentService;
 import com.nailinai.ragent.chat.service.FileStorageService;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.support.TransactionSynchronization;
+import org.springframework.transaction.support.TransactionSynchronizationManager;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.util.StringUtils;
 import org.springframework.web.multipart.MultipartFile;
@@ -128,10 +132,37 @@ public class DocumentServiceImpl implements DocumentService {
         if (document == null) {
             throw new BusinessException(ErrorCode.NOT_FOUND, "document not found");
         }
+        // 竞态守卫：存在进行中/待执行/仍可被重试调度的入库任务时拒绝删除。
+        // FAILED 且 retry_count 未耗尽的任务仍可能被 retryStaleTasks 原子认领转 PENDING
+        // 后重新执行，把 chunk 重新批量插入已删文档（孤儿行）；
+        // 重试额度已耗尽的 FAILED 任务不会再被认领，可安全删除。
+        DocumentTask latestTask = documentTaskMapper.selectLatestByDocId(docId);
+        boolean taskMayStillRun = latestTask != null && (
+                latestTask.getStatus() == TaskStatus.RUNNING
+                        || latestTask.getStatus() == TaskStatus.PENDING
+                        || (latestTask.getStatus() == TaskStatus.FAILED
+                                && latestTask.getRetryCount() != null
+                                && latestTask.getRetryCount() < 3));
+        if (taskMayStillRun) {
+            throw new BusinessException(ErrorCode.CONFLICT,
+                    "document has an indexing task in progress, try again later");
+        }
         documentChunkMapper.deleteByDocId(docId);
         documentTaskMapper.deleteByDocId(docId);
         documentMapper.deleteById(docId);
-        fileStorageService.delete(document.getStoragePath());
+        // 文件删除移到事务提交后执行：若先删文件而事务回滚，文档记录还在但文件已丢，
+        // 该文档将永久无法重新入库。无事务上下文的调用方（理论不应有）直接删，兜底。
+        String storagePath = document.getStoragePath();
+        if (TransactionSynchronizationManager.isSynchronizationActive()) {
+            TransactionSynchronizationManager.registerSynchronization(new TransactionSynchronization() {
+                @Override
+                public void afterCommit() {
+                    fileStorageService.delete(storagePath);
+                }
+            });
+        } else {
+            fileStorageService.delete(storagePath);
+        }
     }
 
     /**

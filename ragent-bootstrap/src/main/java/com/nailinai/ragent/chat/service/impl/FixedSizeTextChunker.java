@@ -13,8 +13,11 @@ public class FixedSizeTextChunker implements TextChunker {
 
     public FixedSizeTextChunker(@Value("${app.rag.chunk-size}") int chunkSize,
                                 @Value("${app.rag.chunk-overlap}") int chunkOverlap) {
-        this.chunkSize = chunkSize;
-        this.chunkOverlap = chunkOverlap;
+        // 参数守卫：chunkSize 至少为 1；overlap 必须 < 步长，否则 start 每轮只前进
+        // Math.max(end-overlap, start+1) 的 +1 兜底，切片数按字符粒度爆炸（O(n·chunkSize)）。
+        // 这里把 overlap 钳制到 [0, chunkSize/2)，既保住重叠语义又杜绝配置失误。
+        this.chunkSize = Math.max(1, chunkSize);
+        this.chunkOverlap = Math.max(0, Math.min(chunkOverlap, this.chunkSize / 2));
     }
 
     @Override

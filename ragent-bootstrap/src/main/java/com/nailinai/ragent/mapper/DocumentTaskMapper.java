@@ -109,7 +109,11 @@ public interface DocumentTaskMapper {
     int update(DocumentTask task);
 
     /**
-     * 重置任务为 PENDING 并递增 retry_count，供定时轮询重试使用。
+     * 原子认领一个可重试的任务：重置为 PENDING 并递增 retry_count。
+     *
+     * <p>WHERE 条件与 selectRetryCandidates 的筛选一致：FAILED 且未超重试上限，
+     * 或 RUNNING/PENDING 且已停滞。并发触发时只有一个调用方能认领成功（返回 1），
+     * 状态已被其他调度方改变的任务返回 0，避免同一文档被两个执行流同时删建 chunk。
      */
     @Update("""
             UPDATE document_task
@@ -119,8 +123,12 @@ public interface DocumentTaskMapper {
                 retry_count = retry_count + 1,
                 updated_at = CURRENT_TIMESTAMP
             WHERE id = #{id}
+              AND ((status = 'FAILED' AND retry_count < #{maxRetry})
+                OR (status IN ('RUNNING', 'PENDING') AND updated_at < #{staleThreshold}))
             """)
-    int resetForRetry(Long id);
+    int resetForRetry(Long id,
+                      @org.apache.ibatis.annotations.Param("staleThreshold") java.time.LocalDateTime staleThreshold,
+                      @org.apache.ibatis.annotations.Param("maxRetry") int maxRetry);
 
     @Delete("""
             DELETE FROM document_task

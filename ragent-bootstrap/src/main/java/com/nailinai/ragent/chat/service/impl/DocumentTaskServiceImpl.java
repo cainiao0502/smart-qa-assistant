@@ -17,6 +17,9 @@ import com.nailinai.ragent.infra.embedding.EmbeddingClient;
 import com.nailinai.ragent.chat.service.TextChunker;
 import com.nailinai.ragent.framework.util.TokenEstimateUtils;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.beans.factory.annotation.Value;
+import org.springframework.context.annotation.Lazy;
 import org.springframework.scheduling.annotation.Async;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.PlatformTransactionManager;
@@ -45,6 +48,17 @@ public class DocumentTaskServiceImpl implements DocumentTaskService {
     private final EmbeddingClient embeddingClient;
     /** 编程式事务模板，用于在异步线程中手动控制事务边界 */
     private final TransactionTemplate transactionTemplate;
+    /** 期望的向量维度，对应 document_chunk.embedding 的 VECTOR(维度) 定义 */
+    private final int embeddingDim;
+
+    /**
+     * 自身代理。retryStaleTasks 里必须经代理调用 executeAsync 才能触发 @Async；
+     * 直接 this 调用会绕过切面，让重试任务同步阻塞在调度线程上。
+     * 单元测试直接 new 时该字段为 null，走降级路径。
+     */
+    @Autowired
+    @Lazy
+    private DocumentTaskService self;
 
     public DocumentTaskServiceImpl(DocumentTaskMapper documentTaskMapper,
                                    DocumentMapper documentMapper,
@@ -52,7 +66,8 @@ public class DocumentTaskServiceImpl implements DocumentTaskService {
                                    DocumentParser documentParser,
                                    TextChunker textChunker,
                                    EmbeddingClient embeddingClient,
-                                   PlatformTransactionManager transactionManager) {
+                                   PlatformTransactionManager transactionManager,
+                                   @Value("${app.rag.embedding-dim:1024}") int embeddingDim) {
         this.documentTaskMapper = documentTaskMapper;
         this.documentMapper = documentMapper;
         this.documentChunkMapper = documentChunkMapper;
@@ -60,6 +75,7 @@ public class DocumentTaskServiceImpl implements DocumentTaskService {
         this.textChunker = textChunker;
         this.embeddingClient = embeddingClient;
         this.transactionTemplate = new TransactionTemplate(transactionManager);
+        this.embeddingDim = Math.max(1, embeddingDim);
     }
 
     @Override
@@ -114,8 +130,10 @@ public class DocumentTaskServiceImpl implements DocumentTaskService {
             return;
         }
 
-        // 标记文档为 INDEXING，任务为 RUNNING + PARSING
-        updateDocumentStatus(document, null, DocumentStatus.INDEXING);
+        // 标记文档为 INDEXING，任务为 RUNNING + PARSING。
+        // 注意保留已有 content：DocumentMapper.update 是无条件覆盖写，
+        // 若此处置 null 而后续解析失败，原本详情页可读的全文会被永久清空。
+        updateDocumentStatus(document, document.getContent(), DocumentStatus.INDEXING);
         updateTask(taskId, TaskStatus.RUNNING, TaskProgress.PARSING, null);
 
         // 耗时追踪
@@ -149,6 +167,16 @@ public class DocumentTaskServiceImpl implements DocumentTaskService {
             embedDurationMs = System.currentTimeMillis() - embedStart;
             if (embeddings.size() != chunks.size()) {
                 throw new BusinessException(ErrorCode.INTERNAL_ERROR, "embedding size does not match chunk size");
+            }
+            // 维度守卫：document_chunk.embedding 是固定维度向量列。换 embedding 模型导致
+            // 维度不符时，与其让批量插入抛裸 SQL 错误（还被重试 3 次白白烧掉配额），
+            // 不如在此快速失败并给出可操作提示。
+            int actualDim = embeddings.get(0).size();
+            if (actualDim != embeddingDim) {
+                throw new BusinessException(ErrorCode.INTERNAL_ERROR,
+                        "embedding dimension mismatch: model returned " + actualDim
+                                + " but document_chunk.embedding expects " + embeddingDim
+                                + ". Switch the embedding model back, or migrate the column and re-index all documents.");
             }
             log.info("Document {} embedded {} chunks, took {}ms", docId, embeddings.size(), embedDurationMs);
 
@@ -284,8 +312,19 @@ public class DocumentTaskServiceImpl implements DocumentTaskService {
         int triggered = 0;
         for (DocumentTask task : candidates) {
             try {
-                documentTaskMapper.resetForRetry(task.getId());
-                executeAsync(task.getId(), task.getDocId(), true);
+                // 原子认领：只有仍处于 FAILED(未超限) 或 已停滞 的任务才会被重置为 PENDING。
+                // 多轮调度/多实例并发触发时只有一个调用方能认领成功，避免同一文档双跑。
+                int claimed = documentTaskMapper.resetForRetry(task.getId(), staleThreshold, MAX_RETRY);
+                if (claimed == 0) {
+                    continue;
+                }
+                // 必须经代理调用：直接 this.executeAsync 会绕过 @Async 切面，
+                // 重试任务会同步阻塞在调度线程上，而不是进入 documentTaskExecutor。
+                if (self != null) {
+                    self.executeAsync(task.getId(), task.getDocId(), true);
+                } else {
+                    executeAsync(task.getId(), task.getDocId(), true);
+                }
                 triggered++;
                 log.info("Retry triggered for task {}: docId={}, retryCount={}", task.getId(), task.getDocId(), task.getRetryCount());
             } catch (Exception ex) {

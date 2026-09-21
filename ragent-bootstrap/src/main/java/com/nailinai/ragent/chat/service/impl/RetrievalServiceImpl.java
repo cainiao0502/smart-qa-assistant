@@ -81,9 +81,13 @@ public class RetrievalServiceImpl implements RetrievalService {
 
         List<SearchResult> results = multiChannelRetriever.retrieve(searchRequest, searchContext);
 
+        // 阈值过滤放在多通道融合之后、作用于排序用的归一化分数，向量与关键词一视同仁：
+        // - 重排开启时用 rerankScore（由向量 cosine / 关键词排名归一分加权而来，∈[0,1]）；
+        // - 重排关闭时退化为通道内归一化的 rawScore（向量通道=cosine 相似度，关键词通道=排名归一分）。
+        // 旧实现只看 chunk.getScore()（仅向量 SQL 赋值），关键词通道结果恒通过，阈值形同虚设。
         List<DocumentChunk> chunks = results.stream()
+                .filter(result -> fusedScore(result) >= scoreThreshold)
                 .map(SearchResult::chunk)
-                .filter(chunk -> chunk.getScore() == null || chunk.getScore() >= scoreThreshold)
                 .toList();
 
         boolean reranked = chunks.stream().anyMatch(chunk -> chunk.getRerankScore() != null);
@@ -95,6 +99,15 @@ public class RetrievalServiceImpl implements RetrievalService {
                 .reranked(reranked)
                 .chunks(chunks)
                 .build();
+    }
+
+    /**
+     * 返回用于阈值过滤的融合归一分：重排开启时为 rerankScore，
+     * 否则为通道内已归一化的 rawScore（向量=cosine，关键词=排名归一分）。
+     */
+    private double fusedScore(SearchResult result) {
+        Double rerankScore = result.chunk().getRerankScore();
+        return rerankScore != null ? rerankScore : result.rawScore();
     }
 
     private String resolveEffectiveQuery(String originalQuery) {

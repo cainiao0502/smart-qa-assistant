@@ -9,7 +9,9 @@ import java.util.Comparator;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Locale;
+import java.util.Objects;
 import java.util.Set;
+import java.util.DoubleSummaryStatistics;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 import java.util.stream.Collectors;
@@ -24,12 +26,26 @@ public class RerankPostProcessor implements SearchPostProcessor {
     private final double semanticWeight;
     private final double lexicalWeight;
 
+    /** RRF 排名分量权重 = 1 - semanticWeight - lexicalWeight，恒 >= 0 */
+    private final double rrfWeight;
+
     public RerankPostProcessor(@Value("${app.rag.rerank.enabled:true}") boolean enabled,
                                @Value("${app.rag.rerank.semantic-weight:0.75}") double semanticWeight,
                                @Value("${app.rag.rerank.lexical-weight:0.25}") double lexicalWeight) {
         this.enabled = enabled;
-        this.semanticWeight = normalizeWeight(semanticWeight);
-        this.lexicalWeight = normalizeWeight(lexicalWeight);
+        double semantic = normalizeWeight(semanticWeight);
+        double lexical = normalizeWeight(lexicalWeight);
+        // 三路权重之和必须为 1 且每路 >= 0：旧实现只各自 clamp [0,1]，
+        // semantic=0.9 + lexical=0.25 时 RRF 权重为 -0.15，共同命中反而被惩罚。
+        // 超出 1 时按比例归一，保持两路相对重要性不变。
+        double sum = semantic + lexical;
+        if (sum > 1.0) {
+            semantic = semantic / sum;
+            lexical = lexical / sum;
+        }
+        this.semanticWeight = semantic;
+        this.lexicalWeight = lexical;
+        this.rrfWeight = 1.0 - semantic - lexical;
     }
 
     @Override
@@ -45,15 +61,29 @@ public class RerankPostProcessor implements SearchPostProcessor {
 
         Set<String> queryTokens = tokenize(context.effectiveQuery());
 
+        // 语义分量归一路径：只有向量通道的结果带 cosine 相似度（chunk.getScore()）。
+        // 关键词通道的 chunk.getScore() 是命中计数/排名，量纲完全不同，绝不能冒充语义分
+        // （旧实现对 score=null 的结果回退 rawScore 充当语义分，与 cosine 直接混算）。
+        // 先对候选集内向量通道的原始分做 min-max 归一到 [0,1] 再加权；
+        // 非向量通道没有语义证据，语义分量记 0，靠词法分与 RRF 排名参与排序。
+        DoubleSummaryStatistics semanticStats = inputs.stream()
+                .filter(r -> VectorSearchChannel.CHANNEL_NAME.equals(r.channel()))
+                .map(r -> r.chunk().getScore())
+                .filter(Objects::nonNull)
+                .mapToDouble(Double::doubleValue)
+                .summaryStatistics();
+
         return inputs.stream()
                 .peek(result -> {
                     DocumentChunk chunk = result.chunk();
-                    double semanticScore = chunk.getScore() == null ? result.rawScore() : chunk.getScore();
+                    double semanticScore = normalizedSemanticScore(result, semanticStats);
+                    // 词法分量归一路径：computeLexicalScore 是命中 token 占比，天然 ∈ [0,1]，无需再归一。
                     double lexicalScore = computeLexicalScore(queryTokens, chunk);
                     double rrfScore = computeRrfScore(result, inputs);
+                    // 三路权重均 >= 0 且和为 1（构造器已保证），RRF 只加不减，不再惩罚共同命中。
                     double rerankScore = semanticScore * semanticWeight
                             + lexicalScore * lexicalWeight
-                            + rrfScore * (1.0 - semanticWeight - lexicalWeight);
+                            + rrfScore * rrfWeight;
                     chunk.setRerankScore(rerankScore);
                     chunk.setHitReason(buildHitReason(chunk, context, lexicalScore, result.channel()));
                 })
@@ -64,6 +94,27 @@ public class RerankPostProcessor implements SearchPostProcessor {
                         .thenComparing(SearchResult::rawScore, Comparator.reverseOrder()))
                 .limit(context.topK())
                 .toList();
+    }
+
+    /**
+     * 语义分归一：向量通道的 cosine 原始分在候选集内 min-max 归一到 [0,1]；
+     * 非向量通道（或 score 缺失）没有语义证据，记 0，不冒充语义分。
+     */
+    private double normalizedSemanticScore(SearchResult result, DoubleSummaryStatistics stats) {
+        if (!VectorSearchChannel.CHANNEL_NAME.equals(result.channel())) {
+            return 0.0;
+        }
+        Double score = result.chunk().getScore();
+        if (score == null) {
+            return 0.0;
+        }
+        double min = stats.getMin();
+        double max = stats.getMax();
+        if (max <= min) {
+            // 候选集中语义分全部相同（或只有一个向量结果），无法区分高低，给满分避免误伤
+            return 1.0;
+        }
+        return (score - min) / (max - min);
     }
 
     private double computeRrfScore(SearchResult target, List<SearchResult> all) {

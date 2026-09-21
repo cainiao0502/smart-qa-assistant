@@ -1,5 +1,7 @@
 package com.nailinai.ragent.eval;
 
+import com.nailinai.ragent.chat.retrieve.RerankPostProcessor;
+
 import com.nailinai.ragent.chat.retrieve.DedupPostProcessor;
 import com.nailinai.ragent.chat.retrieve.MultiChannelRetriever;
 import com.nailinai.ragent.chat.retrieve.SearchChannel;
@@ -10,6 +12,7 @@ import com.nailinai.ragent.dto.response.RetrievalResult;
 import com.nailinai.ragent.entity.DocumentChunk;
 import com.nailinai.ragent.infra.chat.ChatClient;
 import com.nailinai.ragent.infra.embedding.EmbeddingClient;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Component;
 
 import java.util.LinkedHashSet;
@@ -32,15 +35,21 @@ public class RagEvaluator {
     private final ChatClient chatClient;
     private final MultiChannelRetriever defaultRetriever;
     private final List<SearchChannel> channels;
+    private final double rerankSemanticWeight;
+    private final double rerankLexicalWeight;
 
     public RagEvaluator(EmbeddingClient embeddingClient,
                         ChatClient chatClient,
                         MultiChannelRetriever defaultRetriever,
-                        List<SearchChannel> channels) {
+                        List<SearchChannel> channels,
+                        @Value("${app.rag.rerank.semantic-weight:0.75}") double rerankSemanticWeight,
+                        @Value("${app.rag.rerank.lexical-weight:0.25}") double rerankLexicalWeight) {
         this.embeddingClient = embeddingClient;
         this.chatClient = chatClient;
         this.defaultRetriever = defaultRetriever;
         this.channels = channels;
+        this.rerankSemanticWeight = rerankSemanticWeight;
+        this.rerankLexicalWeight = rerankLexicalWeight;
     }
 
     /**
@@ -60,11 +69,21 @@ public class RagEvaluator {
     /**
      * 按消融组合构造检索服务：查询改写开关由构造参数控制；
      * 重排开关通过是否装配 RerankPostProcessor 控制。
+     *
+     * <p>历史缺陷：rerank=true 分支曾直接复用 defaultRetriever，而它的重排行为
+     * 取决于全局配置 app.rag.rerank.enabled——配置关闭时，消融报告里的
+     * "rerank on" 一列实际测的仍是 off，结论直接错误。这里显式构造一个
+     * 强制 enabled=true 的重排器（权重读同一份配置），使消融组合与全局配置解耦。
      */
     private RetrievalService buildRetrievalService(boolean rewrite, boolean rerank) {
-        MultiChannelRetriever retriever = rerank
-                ? defaultRetriever
-                : new MultiChannelRetriever(channels, List.of(new DedupPostProcessor()));
+        MultiChannelRetriever retriever;
+        if (rerank) {
+            retriever = new MultiChannelRetriever(channels, List.of(
+                    new DedupPostProcessor(),
+                    new RerankPostProcessor(true, rerankSemanticWeight, rerankLexicalWeight)));
+        } else {
+            retriever = new MultiChannelRetriever(channels, List.of(new DedupPostProcessor()));
+        }
         return new RetrievalServiceImpl(embeddingClient, chatClient, retriever, rewrite);
     }
 
@@ -102,8 +121,11 @@ public class RagEvaluator {
         if (normalized.isEmpty()) {
             return false;
         }
+        // 只允许「期望名 ⊆ 返回名」方向：期望文档名的关键词出现在返回名中。
+        // 旧实现的双向 contains 会在返回名是期望名的短子串时（如 "a.pdf"）误判命中，
+        // 系统性抬高 recall/precision，消融结论失真。
         return retrievedNames.stream()
                 .map(name -> name == null ? "" : name.toLowerCase())
-                .anyMatch(name -> name.contains(normalized) || normalized.contains(name));
+                .anyMatch(name -> name.contains(normalized));
     }
 }

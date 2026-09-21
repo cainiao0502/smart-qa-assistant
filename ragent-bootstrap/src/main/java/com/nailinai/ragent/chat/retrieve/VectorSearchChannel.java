@@ -11,7 +11,6 @@ import org.springframework.util.StringUtils;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Locale;
-import java.util.stream.Collectors;
 
 @Component
 public class VectorSearchChannel implements SearchChannel {
@@ -21,13 +20,17 @@ public class VectorSearchChannel implements SearchChannel {
     private final DocumentChunkMapper documentChunkMapper;
     private final boolean enabled;
     private final int candidateMultiplier;
+    /** 期望的向量维度，对应 document_chunk.embedding 的 VECTOR(维度) 定义 */
+    private final int expectedEmbeddingDim;
 
     public VectorSearchChannel(DocumentChunkMapper documentChunkMapper,
                                @Value("${app.rag.channel.vector.enabled:true}") boolean enabled,
-                               @Value("${app.rag.rerank.candidate-multiplier:3}") int candidateMultiplier) {
+                               @Value("${app.rag.rerank.candidate-multiplier:3}") int candidateMultiplier,
+                               @Value("${app.rag.embedding-dim:1024}") int expectedEmbeddingDim) {
         this.documentChunkMapper = documentChunkMapper;
         this.enabled = enabled;
         this.candidateMultiplier = Math.max(1, candidateMultiplier);
+        this.expectedEmbeddingDim = Math.max(1, expectedEmbeddingDim);
     }
 
     @Override
@@ -38,6 +41,16 @@ public class VectorSearchChannel implements SearchChannel {
     @Override
     public List<SearchResult> search(SearchRequest request) {
         if (!enabled || request.kbId() == null || !StringUtils.hasText(request.embeddingLiteral())) {
+            return List.of();
+        }
+
+        // 维度守卫：查询向量与库内向量维度不符时，SQL 必然抛错或全军覆没。
+        // 与其吞掉异常静默返回空（检索质量悄悄劣化无人察觉），不如快速跳过并打高可见度日志。
+        int literalDim = countDimensions(request.embeddingLiteral());
+        if (literalDim != expectedEmbeddingDim) {
+            log.error("vector channel skipped: query embedding dimension {} does not match expected {} "
+                            + "(embedding model changed? restore the model or re-index all documents). kbId={}",
+                    literalDim, expectedEmbeddingDim, request.kbId());
             return List.of();
         }
 
@@ -65,6 +78,20 @@ public class VectorSearchChannel implements SearchChannel {
                     request.kbId(), summarizeLiteral(request.embeddingLiteral()), ex.getMessage());
             return List.of();
         }
+    }
+
+    /** 从 pgvector 字面量 [a,b,c] 统计向量维度 */
+    private int countDimensions(String literal) {
+        if (literal == null || literal.length() < 2) {
+            return 0;
+        }
+        int commas = 0;
+        for (int i = 0; i < literal.length(); i++) {
+            if (literal.charAt(i) == ',') {
+                commas++;
+            }
+        }
+        return commas + 1;
     }
 
     private String summarizeLiteral(String literal) {

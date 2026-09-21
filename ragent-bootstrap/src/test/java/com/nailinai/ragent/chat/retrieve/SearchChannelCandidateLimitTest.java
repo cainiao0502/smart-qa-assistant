@@ -30,7 +30,7 @@ class SearchChannelCandidateLimitTest {
         DocumentChunkMapper mapper = mock(DocumentChunkMapper.class);
         when(mapper.selectTopKByKbId(any(), any(), any(), any(), any(), any(), any()))
                 .thenReturn(List.of(chunk()));
-        VectorSearchChannel channel = new VectorSearchChannel(mapper, true, 5);
+        VectorSearchChannel channel = new VectorSearchChannel(mapper, true, 5, 2);
 
         channel.search(request("[0.1,0.2]"));
 
@@ -56,7 +56,7 @@ class SearchChannelCandidateLimitTest {
         DocumentChunkMapper mapper = mock(DocumentChunkMapper.class);
         when(mapper.selectTopKByKbId(any(), any(), any(), any(), any(), any(), any()))
                 .thenReturn(List.of(chunk()));
-        VectorSearchChannel channel = new VectorSearchChannel(mapper, true, 0);
+        VectorSearchChannel channel = new VectorSearchChannel(mapper, true, 0, 2);
 
         channel.search(request("[0.1,0.2]"));
 
