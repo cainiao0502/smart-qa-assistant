@@ -484,7 +484,7 @@ Content-Type: application/json
 ```json
 {
   "username": "testuser",
-  "password": "123456"
+  "password": "<your-password>"
 }
 ```
 
@@ -502,7 +502,7 @@ Content-Type: application/json
 ```json
 {
   "username": "testuser",
-  "password": "123456"
+  "password": "<your-password>"
 }
 ```
 

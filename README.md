@@ -147,18 +147,7 @@ psql -U postgres -d ragent -f database.sql
 cp .env.example .env
 ```
 
-至少需要配置：
-
-```env
-SPRING_DATASOURCE_URL=jdbc:postgresql://127.0.0.1:5432/ragent
-SPRING_DATASOURCE_USERNAME=postgres
-SPRING_DATASOURCE_PASSWORD=your_password
-
-APP_LLM_BASE_URL=your_llm_base_url
-APP_LLM_API_KEY=your_llm_api_key
-APP_LLM_CHAT_MODEL=your_chat_model
-APP_LLM_EMBEDDING_MODEL=your_embedding_model
-```
+各配置项的名称、含义与默认值见 `.env.example` 📄。（真实 `.env` 请勿提交，已在 `.gitignore` 中）
 
 如需启用 MCP 🔌：
 
@@ -187,7 +176,7 @@ npm run dev
 
 ## 🎬 推荐演示链路
 
-如果你要拿这个项目去面试 🎓，建议现场演示或录屏按下面顺序来：
+本地跑通后 🎬，可按下面顺序体验完整主链路：
 
 1. 🔐 注册/登录
 2. 📚 创建知识库
