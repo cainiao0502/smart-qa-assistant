@@ -2,6 +2,8 @@ package com.nailinai.ragent.controller;
 
 import com.nailinai.ragent.framework.common.Result;
 import com.nailinai.ragent.framework.common.ErrorCode;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import com.nailinai.ragent.dto.request.ApprovalDecisionRequest;
 import com.nailinai.ragent.dto.request.ChatRequest;
 import com.nailinai.ragent.dto.response.AgentRunDetailResponse;
@@ -28,10 +30,15 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import jakarta.annotation.PreDestroy;
 
 @RestController
 @RequestMapping("/api/chat")
 public class ChatController {
+
+    private static final Logger log = LoggerFactory.getLogger(ChatController.class);
 
     private final ChatService chatService;
 
@@ -44,9 +51,29 @@ public class ChatController {
         return Result.success(chatService.chat(request));
     }
 
+    /**
+     * SSE 长连接的总超时：一把保护伞。历史实现用 0L（永不超时），一旦异步链路里
+     * 出现任何漏发 complete 的路径，连接和资源会永久挂住。10 分钟足够覆盖最长的
+     * 多步 agent 运行；到点由 Spring 强制 complete，避免泄漏。
+     */
+    private static final long STREAM_TIMEOUT_MS = 10 * 60 * 1000L;
+
+    /**
+     * SSE 专用执行器。历史实现用 CompletableFuture.runAsync 默认的
+     * ForkJoinPool.commonPool，而流式链路里审批等待最长可阻塞 120 秒——
+     * 少量并发会话即可占满 commonPool，拖累 JVM 内所有依赖它的任务。
+     * 虚拟线程逐任务开销极小，阻塞等待不占用平台线程。
+     */
+    private final ExecutorService streamExecutor = Executors.newVirtualThreadPerTaskExecutor();
+
+    @PreDestroy
+    public void shutdownStreamExecutor() {
+        streamExecutor.shutdownNow();
+    }
+
     @PostMapping(path = "/stream", produces = MediaType.TEXT_EVENT_STREAM_VALUE)
     public ResponseEntity<SseEmitter> streamChat(@Valid @RequestBody ChatRequest request) {
-        SseEmitter emitter = new SseEmitter(0L);
+        SseEmitter emitter = new SseEmitter(STREAM_TIMEOUT_MS);
         try {
             Map<String, Object> startPayload = new LinkedHashMap<>();
             startPayload.put("sessionId", request.getSessionId());
@@ -58,14 +85,18 @@ public class ChatController {
             emitter.completeWithError(ex);
             return ResponseEntity.internalServerError().body(emitter);
         }
-        // 必须在请求线程内捕获用户身份：下面提交的异步任务运行在 ForkJoinPool 中，
+        // 必须在请求线程内捕获用户身份：下面提交的异步任务运行在独立线程池中，
         // 那里读不到 Sa-Token 的 ThreadLocal，会导致 owner_user_id 落库为 NULL、
         // 历史会话列表因此恒为空（详见 UserIdHolder）。
         Long currentUserId = UserIdHolder.capture();
-        CompletableFuture.runAsync(() -> {
+        streamExecutor.execute(() -> {
             UserIdHolder.set(currentUserId);
             try {
                 chatService.streamChat(request, emitter);
+            } catch (Throwable unexpected) {
+                // 兜底：服务层任何未处理异常都必须终止 emitter，否则连接永久挂起
+                log.error("stream chat failed unexpectedly, sessionId={}", request.getSessionId(), unexpected);
+                emitter.completeWithError(unexpected);
             } finally {
                 UserIdHolder.clear();
             }

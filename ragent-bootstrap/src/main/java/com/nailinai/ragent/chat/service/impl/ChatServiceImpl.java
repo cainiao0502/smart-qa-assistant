@@ -30,6 +30,8 @@ import com.nailinai.ragent.infra.chat.ChatClient;
 import com.nailinai.ragent.chat.service.MemoryService;
 import com.nailinai.ragent.framework.util.JsonUtils;
 import com.nailinai.ragent.util.PromptBuilder;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
@@ -49,6 +51,8 @@ import java.util.concurrent.TimeUnit;
 
 @Service
 public class ChatServiceImpl implements ChatService {
+
+    private static final Logger log = LoggerFactory.getLogger(ChatServiceImpl.class);
 
     private final MemoryService memoryService;
     private final ChatAgentOrchestrator chatAgentOrchestrator;
@@ -264,11 +268,17 @@ public class ChatServiceImpl implements ChatService {
 
         ScheduledFuture<?> heartbeatFuture = sseHeartbeatExecutor.scheduleAtFixedRate(
                 () -> {
-                    if (streamState.isDisconnected()) {
-                        cancelSignal.set(true);
-                        return;
+                    try {
+                        if (streamState.isDisconnected()) {
+                            cancelSignal.set(true);
+                            return;
+                        }
+                        sendEvent(emitter, "ping", Map.of("ts", System.currentTimeMillis()));
+                    } catch (Exception ex) {
+                        // scheduleAtFixedRate 的任务抛未捕获异常会静默终止后续所有调度；
+                        // 心跳失败必须记录并吞掉，保证心跳循环不被一次瞬时故障杀死
+                        log.warn("SSE heartbeat task failed", ex);
                     }
-                    sendEvent(emitter, "ping", Map.of("ts", System.currentTimeMillis()));
                 },
                 10,
                 10,
@@ -497,11 +507,17 @@ public class ChatServiceImpl implements ChatService {
                     .build());
             emitter.complete();
         } catch (Exception ex) {
-            handleStreamingFailure(request, emitter, orchestration, answerBuilder.toString().trim(), ex);
-            if (!isClientDisconnect(ex)) {
-                sendEvent(emitter, "error", Map.of(
-                        "message", ex.getMessage() == null ? "stream chat failed" : ex.getMessage()
-                ));
+            try {
+                handleStreamingFailure(request, emitter, orchestration, answerBuilder.toString().trim(), ex);
+                if (!isClientDisconnect(ex)) {
+                    sendEvent(emitter, "error", Map.of(
+                            "message", ex.getMessage() == null ? "stream chat failed" : ex.getMessage()
+                    ));
+                }
+            } catch (Exception failureHandlingException) {
+                // 兜底：失败处理自身（completeRun/落库/发事件）再出问题也不能跳过 complete，
+                // 否则 SSE 连接与相关资源永久挂住。
+                log.warn("stream failure handling failed, sessionId={}", request.getSessionId(), failureHandlingException);
             }
             emitter.complete();
         } finally {
@@ -578,14 +594,20 @@ public class ChatServiceImpl implements ChatService {
         }
         Long ownerUserId = messages.get(0).getOwnerUserId();
         Long currentUserId = com.nailinai.ragent.user.context.UserContext.currentUserId();
-        if (ownerUserId != null && !ownerUserId.equals(currentUserId)) {
+        // 安全：owner 为 NULL 说明历史异步路径丢过用户上下文，这类会话对任何
+        // 用户（包括管理员）都不应可见可删，统一按不存在处理，避免成为共享数据。
+        if (ownerUserId == null || !ownerUserId.equals(currentUserId)) {
             throw new BusinessException(ErrorCode.NOT_FOUND, "session not found");
         }
     }
 
     @Override
     public AgentRunDetailResponse getRunDetail(String runId) {
-        return agentRunStore.getRunDetail(runId);
+        AgentRunDetailResponse detail = agentRunStore.getRunDetail(runId);
+        // 安全：run 详情含原始提问、最终回答与全部执行步骤，必须校验归属。
+        // agent_run 没有 owner 列，但 run 必属于某个会话，用会话消息的归属做校验。
+        assertSessionOwner(memoryService.getSessionMessages(detail.getSessionId()));
+        return detail;
     }
 
     private Map<String, Object> buildRetrievalConfig(ChatRequest request, RetrievalResult retrievalResult) {
@@ -740,13 +762,18 @@ public class ChatServiceImpl implements ChatService {
     }
 
     private boolean sendEvent(SseEmitter emitter, String eventName, Object payload) {
-        try {
-            emitter.send(SseEmitter.event()
-                    .name(eventName)
-                    .data(JsonUtils.toJson(sanitizeSsePayload(payload))));
-            return true;
-        } catch (IOException | IllegalStateException ex) {
-            return false;
+        // 心跳线程与业务线程会并发调用本方法，而 SseEmitter.send 不是线程安全的，
+        // 并发 send 会导致 SSE 帧交叉损坏。以 emitter 实例本身作为每条流的专用
+        // send 锁（一个 emitter 对应一条流），所有事件串行写出。
+        synchronized (emitter) {
+            try {
+                emitter.send(SseEmitter.event()
+                        .name(eventName)
+                        .data(JsonUtils.toJson(sanitizeSsePayload(payload))));
+                return true;
+            } catch (IOException | IllegalStateException ex) {
+                return false;
+            }
         }
     }
 
@@ -819,7 +846,6 @@ public class ChatServiceImpl implements ChatService {
                 .displayName(toolCall.getDisplayName())
                 .source(toolCall.getSource())
                 .status(toolCall.getStatus())
-                .arguments(toolCall.getArguments())
                 .summary(toolCall.getSummary())
                 .resultPreview(toolCall.getResultPreview())
                 .rawResult(null)
@@ -836,28 +862,35 @@ public class ChatServiceImpl implements ChatService {
             return;
         }
 
-        boolean hasPartialAnswer = StringUtils.hasText(partialAnswer);
-        String fallbackStatus = hasPartialAnswer ? "PARTIAL" : "FAILED";
-        agentRunStore.completeRun(orchestration.getRunId(), fallbackStatus, hasPartialAnswer ? partialAnswer : null);
+        try {
+            boolean hasPartialAnswer = StringUtils.hasText(partialAnswer);
+            String fallbackStatus = hasPartialAnswer ? "PARTIAL" : "FAILED";
+            agentRunStore.completeRun(orchestration.getRunId(), fallbackStatus, hasPartialAnswer ? partialAnswer : null);
 
-        if (hasPartialAnswer && !isClientDisconnect(exception)) {
-            memoryService.saveAssistantMessage(
-                    request.getSessionId(),
-                    request.getKbId(),
-                    orchestration.getRunId(),
-                    partialAnswer,
-                    JsonUtils.toJson(orchestration.getReferences()),
-                    JsonUtils.toJson(sanitizeToolCalls(orchestration.getToolCalls()))
-            );
-        }
+            if (hasPartialAnswer && !isClientDisconnect(exception)) {
+                memoryService.saveAssistantMessage(
+                        request.getSessionId(),
+                        request.getKbId(),
+                        orchestration.getRunId(),
+                        partialAnswer,
+                        JsonUtils.toJson(orchestration.getReferences()),
+                        JsonUtils.toJson(sanitizeToolCalls(orchestration.getToolCalls()))
+                );
+            }
 
-        if (!isClientDisconnect(exception)) {
-            sendEvent(emitter, "run_status", Map.of(
-                    "runId", orchestration.getRunId(),
-                    "status", fallbackStatus
-            ));
+            if (!isClientDisconnect(exception)) {
+                sendEvent(emitter, "run_status", Map.of(
+                        "runId", orchestration.getRunId(),
+                        "status", fallbackStatus
+                ));
+            }
+        } catch (Exception cleanupException) {
+            // 调用方已经在外层兜底 complete，但这里如果把 DB 故障等再抛上去，
+            // 会覆盖掉原始异常上下文并可能跳过后续 sendEvent。记录后吞掉。
+            log.warn("failed to persist partial result for runId={}", orchestration.getRunId(), cleanupException);
         }
     }
+
 
     private static final class StreamState {
         private final AtomicBoolean disconnected = new AtomicBoolean(false);
