@@ -41,17 +41,28 @@ public class SkillController {
         this.skillToolExecutorFactory = skillToolExecutorFactory;
     }
 
+    /**
+     * 管理端：技能定义全集（含非可执行技能），供管理页展示与编辑。
+     * 该路径在管理员墙内（见 AsyncSafeSaInterceptor）。
+     */
     @GetMapping
     public Result<List<SkillDefinitionResponse>> listSkills() {
         return Result.success(skillRegistry.listSkills().stream()
-                .map(skill -> SkillDefinitionResponse.builder()
-                        .name(skill.getName())
-                        .title(skill.getTitle())
-                        .description(skill.getDescription())
-                        .toolName(skill.getToolName())
-                        .executorType(skill.getExecutorType())
-                        .executable(skill.isExecutable())
-                        .build())
+                .map(this::toDefinitionResponse)
+                .toList());
+    }
+
+    /**
+     * 用户端：技能目录（名称 / 标题 / 描述 / 是否可执行），供对话页勾选「启用哪些技能」。
+     *
+     * <p>与 {@link #listSkills()} 的区别只在<b>访问主体</b>：本接口对任何登录用户开放
+     * （路径在管理员墙的白名单里），因此刻意只返回元数据——SKILL.md 正文属渐进式披露的
+     * 第二层，仅由模型调用 {@code load_skill} 时进入上下文，不通过 HTTP 下发给普通用户。</p>
+     */
+    @GetMapping("/available")
+    public Result<List<SkillDefinitionResponse>> listAvailableSkills() {
+        return Result.success(skillRegistry.listSkills().stream()
+                .map(this::toDefinitionResponse)
                 .toList());
     }
 
@@ -116,6 +127,17 @@ public class SkillController {
     public Result<Void> reloadSkills() {
         skillRegistry.reload();
         return Result.success();
+    }
+
+    private SkillDefinitionResponse toDefinitionResponse(SkillDefinition skill) {
+        return SkillDefinitionResponse.builder()
+                .name(skill.getName())
+                .title(skill.getTitle())
+                .description(skill.getDescription())
+                .toolName(skill.getToolName())
+                .executorType(skill.getExecutorType())
+                .executable(skill.isExecutable())
+                .build();
     }
 
     private SkillDetailResponse toDetailResponse(SkillDefinition skill) {

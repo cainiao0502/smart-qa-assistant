@@ -69,6 +69,9 @@ export const kbApi = {
 
 export const skillApi = {
   list: () => api.get('/skills'),
+  // 对话页用的技能目录：与管理端 list 返回同一份元数据，但服务端对普通用户开放
+  // （/api/skills/** 默认 admin-only，/api/skills/available 在白名单里）
+  listAvailable: () => api.get('/skills/available'),
   getDetail: (name) => api.get(`/skills/${name}`),
   create: (data) => api.post('/skills', data),
   update: (name, data) => api.put(`/skills/${name}`, data),

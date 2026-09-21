@@ -941,12 +941,14 @@ async function fetchKnowledgeBases() {
 
 async function fetchSkills() {
   try {
-    const response = await skillApi.list()
+    // 走用户端目录接口：/api/skills 是管理端接口，普通用户拿 403（曾因此静默拿到空列表）
+    const response = await skillApi.listAvailable()
     availableSkills.value = response.data || []
     const validSkills = new Set(availableSkills.value.map((item) => item.name))
     selectedSkillNames.value = selectedSkillNames.value.filter((name) => validSkills.has(name))
-  } catch {
+  } catch (error) {
     availableSkills.value = []
+    console.warn('[ChatView] 加载技能目录失败，本次将不展示可选 skill', error)
   }
 }
 
