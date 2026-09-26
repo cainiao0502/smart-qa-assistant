@@ -17,9 +17,11 @@ import java.util.List;
  *
  * <p>启动后从评估集文件加载查询：
  * <ol>
- *   <li>对"查询改写 + 重排"做 2x2 消融，输出各组合的文档级 recall@k / precision@k；</li>
- *   <li>若开启 {@code app.eval.semantic-enabled}，再对每条查询做语义级评估
- *       （LLM-as-judge：faithfulness / answerRelevancy）并输出均值。</li>
+ *     <li>对"查询改写 + 重排"做 2x2 消融，输出各组合的文档级 recall@k / precision@k；</li>
+ *     <li>追加第五列：与全开组合相同、但叠加生产路径阈值（reference-distance-threshold 换算），
+ *         用于暴露「阈值过滤吞掉正确答案」的失败模式；</li>
+ *     <li>若开启 {@code app.eval.semantic-enabled}，再对每条查询做语义级评估
+ *         （LLM-as-judge：faithfulness / answerRelevancy）并输出均值。</li>
  * </ol>
  */
 @Component
@@ -33,19 +35,23 @@ public class RagEvaluationRunner implements ApplicationRunner {
     private final boolean enabled;
     private final boolean semanticEnabled;
     private final String evaluationSetPath;
+    /** 生产路径的融合分阈值：由 reference-distance-threshold（距离）换算而来，用于第五列消融 */
+    private final double productionScoreThreshold;
 
     public RagEvaluationRunner(RagEvaluator ragEvaluator,
                                RagSemanticEvaluator semanticEvaluator,
                                ObjectMapper objectMapper,
                                @Value("${app.eval.enabled:false}") boolean enabled,
                                @Value("${app.eval.semantic-enabled:false}") boolean semanticEnabled,
-                               @Value("${app.eval.set-path:data/eval/eval-set.json}") String evaluationSetPath) {
+                               @Value("${app.eval.set-path:data/eval/eval-set.json}") String evaluationSetPath,
+                               @Value("${app.rag.reference-distance-threshold:0.4}") double referenceDistanceThreshold) {
         this.ragEvaluator = ragEvaluator;
         this.semanticEvaluator = semanticEvaluator;
         this.objectMapper = objectMapper;
         this.enabled = enabled;
         this.semanticEnabled = semanticEnabled;
         this.evaluationSetPath = evaluationSetPath;
+        this.productionScoreThreshold = Math.max(0.0, Math.min(1.0, 1 - referenceDistanceThreshold));
     }
 
     @Override
@@ -76,6 +82,13 @@ public class RagEvaluationRunner implements ApplicationRunner {
         log.info("[ablation] {}", noRewrite.compactSummary());
         log.info("[ablation] {}", noRerank.compactSummary());
         log.info("[ablation] {}", minimal.compactSummary());
+
+        // 第五列：与 full 相同的开关组合，但叠加生产路径的真实阈值。
+        // 生产环境所有检索都会经过这道过滤，若阈值会吞掉正确答案，只有这一列能暴露。
+        EvaluationReport withProductionThreshold =
+                ragEvaluator.evaluate(set, true, true, productionScoreThreshold);
+        log.info("[ablation-threshold] productionScoreThreshold={} {}", productionScoreThreshold,
+                withProductionThreshold.compactSummary());
 
         log.info("-- per-query detail (baseline: rewrite+rerank) --");
         for (QueryEvaluation query : full.queries()) {

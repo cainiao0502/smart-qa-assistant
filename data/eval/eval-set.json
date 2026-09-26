@@ -25,6 +25,118 @@
     {
       "question": "Mini Ragent 端到端验证流程包含哪些环节？",
       "expectedDocuments": ["e2e.txt"]
+    },
+    {
+      "question": "一个完整的 RAG 系统由哪些核心模块组成？",
+      "expectedDocuments": ["aaa.txt"]
+    },
+    {
+      "question": "RAG 文档解析层需要完成哪些核心工作？",
+      "expectedDocuments": ["aaa.txt"]
+    },
+    {
+      "question": "文档分块（chunking）的目标是什么？常见分块策略有哪些？",
+      "expectedDocuments": ["aaa.txt"]
+    },
+    {
+      "question": "为什么 embedding 模型的选型会显著影响检索效果？哪些场景受影响最大？",
+      "expectedDocuments": ["aaa.txt"]
+    },
+    {
+      "question": "RAG 检索层的常见检索方法有哪些？",
+      "expectedDocuments": ["aaa.txt"]
+    },
+    {
+      "question": "很多 RAG 项目效果不好的常见失败原因有哪些？",
+      "expectedDocuments": ["aaa.txt"]
+    },
+    {
+      "question": "为什么向量检索之后还需要 rerank 重排模型？",
+      "expectedDocuments": ["aaa.txt"]
+    },
+    {
+      "question": "企业级 RAG 应该建立哪些评估指标？",
+      "expectedDocuments": ["aaa.txt"]
+    },
+    {
+      "question": "什么内容适合入库做知识库？哪些内容不适合直接入库？",
+      "expectedDocuments": ["aaa.txt"]
+    },
+    {
+      "question": "企业级 RAG 的关键设计原则有哪些？",
+      "expectedDocuments": ["aaa.txt"]
+    },
+    {
+      "question": "RAG 与传统搜索有什么区别？",
+      "expectedDocuments": ["aaa.txt"]
+    },
+    {
+      "question": "把一个普通知识库升级为高质量知识库分为哪几个阶段？",
+      "expectedDocuments": ["aaa.txt"]
+    },
+    {
+      "question": "RAG 项目落地时最容易忽略哪些事情？",
+      "expectedDocuments": ["aaa.txt"]
+    },
+    {
+      "question": "一个高质量的 RAG 回答应该满足哪些要求？",
+      "expectedDocuments": ["aaa.txt"]
+    },
+    {
+      "question": "RAG 系统为什么必须支持拒答？",
+      "expectedDocuments": ["aaa.txt"]
+    },
+    {
+      "question": "优质知识文档的写法有哪些建议？",
+      "expectedDocuments": ["aaa.txt"]
+    },
+    {
+      "question": "RAG 系统效果的上限由哪些因素共同决定？",
+      "expectedDocuments": ["aaa.txt"]
+    },
+    {
+      "question": "达特茅斯会议是哪一年召开的？有什么历史意义？",
+      "expectedDocuments": ["introduce.txt"]
+    },
+    {
+      "question": "第一次 AI 寒冬产生的原因有哪些？",
+      "expectedDocuments": ["introduce.txt"]
+    },
+    {
+      "question": "专家系统为什么在 1980 年代末走向衰落？",
+      "expectedDocuments": ["introduce.txt"]
+    },
+    {
+      "question": "深蓝计算机击败国际象棋世界冠军是哪一年？",
+      "expectedDocuments": ["introduce.txt"]
+    },
+    {
+      "question": "AlexNet 在 2012 年 ImageNet 竞赛中取得成功的关键创新是什么？",
+      "expectedDocuments": ["introduce.txt"]
+    },
+    {
+      "question": "Transformer 架构的核心创新是什么？",
+      "expectedDocuments": ["introduce.txt"]
+    },
+    {
+      "question": "BERT 和 GPT 两条技术路线的区别是什么？",
+      "expectedDocuments": ["introduce.txt"]
+    },
+    {
+      "question": "ChatGPT 通过什么技术让回答更有帮助、更安全？",
+      "expectedDocuments": ["introduce.txt"]
+    },
+    {
+      "question": "AI 对齐问题为什么被视为 AI 安全的核心挑战？",
+      "expectedDocuments": ["introduce.txt"]
+    },
+    {
+      "question": "RAG 技术主要用来解决大模型的哪两类问题？",
+      "expectedDocuments": ["introduce.txt"]
+    },
+    {
+      "question": "ChatGPT 最新的模型版本是什么？",
+      "expectedDocuments": ["task.txt"]
     }
   ]
 }

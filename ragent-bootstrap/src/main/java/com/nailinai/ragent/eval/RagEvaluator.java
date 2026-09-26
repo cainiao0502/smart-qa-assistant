@@ -4,6 +4,7 @@ import com.nailinai.ragent.chat.retrieve.RerankPostProcessor;
 
 import com.nailinai.ragent.chat.retrieve.DedupPostProcessor;
 import com.nailinai.ragent.chat.retrieve.MultiChannelRetriever;
+import com.nailinai.ragent.chat.retrieve.NeighborContextExpander;
 import com.nailinai.ragent.chat.retrieve.SearchChannel;
 import com.nailinai.ragent.chat.service.RetrievalService;
 import com.nailinai.ragent.chat.service.impl.RetrievalServiceImpl;
@@ -53,15 +54,30 @@ public class RagEvaluator {
     }
 
     /**
-     * 在指定消融组合下评估整个评估集。
+     * 在指定消融组合下评估整个评估集（阈值为 0，即不过滤，测「检索能力本身」）。
      */
     public EvaluationReport evaluate(RagEvaluationSet set, boolean queryRewriteEnabled, boolean rerankEnabled) {
+        return evaluate(set, queryRewriteEnabled, rerankEnabled, 0.0);
+    }
+
+    /**
+     * 在指定消融组合与业务阈值下评估整个评估集。
+     *
+     * <p>阈值作为独立维度传入：生产路径会把 reference-distance-threshold 换算成
+     * 融合分阈值过滤结果，若消融只测阈值 0，生产阈值「静默吞掉正确答案」的失败
+     * 模式不会出现在任何报告里。新增 productionThreshold 组合正是为了补上这块盲区。</p>
+     */
+    public EvaluationReport evaluate(RagEvaluationSet set,
+                                     boolean queryRewriteEnabled,
+                                     boolean rerankEnabled,
+                                     double scoreThreshold) {
         if (set == null || set.queries().isEmpty()) {
             return EvaluationReport.aggregate(queryRewriteEnabled, rerankEnabled, List.of());
         }
         RetrievalService service = buildRetrievalService(queryRewriteEnabled, rerankEnabled);
+        double threshold = Math.max(0.0, Math.min(1.0, scoreThreshold));
         List<QueryEvaluation> queryResults = set.queries().stream()
-                .map(query -> evaluateQuery(service, set, query))
+                .map(query -> evaluateQuery(service, set, query, threshold))
                 .toList();
         return EvaluationReport.aggregate(queryRewriteEnabled, rerankEnabled, queryResults);
     }
@@ -84,10 +100,15 @@ public class RagEvaluator {
         } else {
             retriever = new MultiChannelRetriever(channels, List.of(new DedupPostProcessor()));
         }
-        return new RetrievalServiceImpl(embeddingClient, chatClient, retriever, rewrite);
+        // 评估测的是「检索命中了什么」，small-to-big 的相邻正文扩展属于服务期增强，
+        // 会改变切片文本但不改变命中集合——这里显式关闭，保证指标口径稳定。
+        // 改写缓存同样关闭（cache-size=0）：消融各组合要真实执行，不受同问题历史改写影响。
+        return new RetrievalServiceImpl(embeddingClient, chatClient, retriever,
+                NeighborContextExpander.disabled(), rewrite, 0);
     }
 
-    private QueryEvaluation evaluateQuery(RetrievalService service, RagEvaluationSet set, RagEvaluationQuery query) {
+    private QueryEvaluation evaluateQuery(RetrievalService service, RagEvaluationSet set,
+                                          RagEvaluationQuery query, double scoreThreshold) {
         int topK = set.effectiveTopK(query);
 
         ChatRequest request = new ChatRequest();
@@ -96,7 +117,7 @@ public class RagEvaluator {
         request.setQuestion(query.question());
         request.setTopK(topK);
 
-        RetrievalResult result = service.retrieve(request, topK, 0.0);
+        RetrievalResult result = service.retrieve(request, topK, scoreThreshold);
 
         List<DocumentChunk> topChunks = result.getChunks().stream()
                 .limit(topK)
