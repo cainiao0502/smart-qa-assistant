@@ -14,6 +14,8 @@ public class AgentRunEntity extends BaseEntity {
     private String userGoal;
     private String status;
     private String finalAnswer;
+    /** 归属用户：run 详情接口用它做归属校验（历史行为 NULL，回退会话消息校验） */
+    private Long ownerUserId;
 
     // ---- 成本与耗时统计（口径参考 pi 的 telemetry：只记 provider 上报值）----
     /** 主循环耗时（毫秒） */

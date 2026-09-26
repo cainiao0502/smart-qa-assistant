@@ -238,8 +238,8 @@ class AgentPlannerServiceTest {
     }
 
     @Test
-    @DisplayName("多个业务工具并发返回：只执行第一个，并在 reason 中如实告知其余未执行")
-    void multipleToolCalls_shouldExecuteFirstAndReportSkipped() {
+    @DisplayName("多个业务工具并发返回：第一个作为主调用，其余进入 additionalToolCalls 待执行")
+    void multipleToolCalls_shouldKeepAdditionalCallsForExecution() {
         when(chatClient.chat(any(LlmRequest.class))).thenReturn(new ChatResponse(
                 null,
                 "test-provider",
@@ -254,9 +254,9 @@ class AgentPlannerServiceTest {
 
         assertThat(decision.shouldCallTool()).isTrue();
         assertThat(decision.getTool()).isEqualTo("kb_catalog");
-        assertThat(decision.getReason())
-                .contains("NOT executed")
-                .contains("document_detail");
+        assertThat(decision.getReason()).contains("document_detail");
+        assertThat(decision.getAdditionalToolCalls()).hasSize(1);
+        assertThat(decision.getAdditionalToolCalls().get(0).name()).isEqualTo("document_detail");
     }
 
     private ChatRequest buildRequest() {

@@ -44,6 +44,7 @@ public class AgentRunStore {
         entity.setUserGoal(run.getUserGoal());
         entity.setStatus(run.getStatus());
         entity.setFinalAnswer(run.getFinalAnswer());
+        entity.setOwnerUserId(run.getOwnerUserId());
         agentRunMapper.insert(entity);
     }
 
@@ -109,6 +110,7 @@ public class AgentRunStore {
                 .userGoal(run.getUserGoal())
                 .status(run.getStatus())
                 .finalAnswer(run.getFinalAnswer())
+                .ownerUserId(run.getOwnerUserId())
                 .agentPlan(plan)
                 .currentActionKey(currentActionKey)
                 .completedTaskKeys(completedTaskKeys)

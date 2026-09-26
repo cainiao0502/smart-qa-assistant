@@ -252,6 +252,68 @@ class AgentRuntimeServiceTest {
         assertThat(result.getFinalInstruction()).isEqualTo("当前信息不足以回答");
     }
 
+    @Test
+    @DisplayName("同响应多个业务工具：全部按序执行并回灌观察，而不是只执行第一个")
+    void multipleToolCallsInOneDecision_shouldExecuteAll() {
+        PlannerDecision multiDecision = toolCallDecision("task_1", "kb_lookup", Map.of("query", "问题"));
+        multiDecision.setAdditionalToolCalls(List.of(
+                com.nailinai.ragent.infra.chat.ToolCall.of("call_2", "kb_catalog", Map.of())));
+        PlannerDecision finishDecision = finishDecision("task_final", "综合回答", planOf("task_final"));
+        when(agentPlannerService.decide(any(), any(), any(), anyList()))
+                .thenReturn(multiDecision, finishDecision);
+
+        ToolExecutor lookupExecutor = mock(ToolExecutor.class);
+        when(lookupExecutor.getToolName()).thenReturn("kb_lookup");
+        when(lookupExecutor.execute(anyMap(), any())).thenReturn(ToolExecutionResult.builder()
+                .trace(ToolCallTraceResponse.builder()
+                        .toolName("kb_lookup").displayName("KB Lookup").source("builtin")
+                        .status("SUCCESS").summary("lookup ok").durationMs(5L).build())
+                .summary("lookup ok")
+                .build());
+        when(toolExecutorRegistry.getRequired("kb_lookup")).thenReturn(lookupExecutor);
+
+        ToolExecutor catalogExecutor = mock(ToolExecutor.class);
+        when(catalogExecutor.getToolName()).thenReturn("kb_catalog");
+        when(catalogExecutor.execute(anyMap(), any())).thenReturn(ToolExecutionResult.builder()
+                .trace(ToolCallTraceResponse.builder()
+                        .toolName("kb_catalog").displayName("KB Catalog").source("builtin")
+                        .status("SUCCESS").summary("catalog ok").durationMs(5L).build())
+                .summary("catalog ok")
+                .build());
+        when(toolExecutorRegistry.getRequired("kb_catalog")).thenReturn(catalogExecutor);
+
+        AgentRuntimeResult result = service.run(buildRequest(), List.of(), buildRetrievalResult());
+
+        assertThat(result.getRun().getStatus()).isEqualTo("SUCCESS");
+        // 两个调用都真实执行，轨迹按序记录
+        assertThat(result.getToolCalls()).extracting(ToolCallTraceResponse::getToolName)
+                .containsExactly("kb_lookup", "kb_catalog");
+        verify(lookupExecutor).execute(anyMap(), any());
+        verify(catalogExecutor).execute(anyMap(), any());
+        // 同一次决策的两个调用落在同一步（stepIndex 相同），轨迹按追加顺序展示
+        List<AgentStep> toolSteps = result.getSteps().stream()
+                .filter(step -> "tool_call".equals(step.getStepType()))
+                .toList();
+        assertThat(toolSteps).hasSize(2);
+        assertThat(toolSteps.get(0).getToolName()).isEqualTo("kb_lookup");
+        assertThat(toolSteps.get(1).getToolName()).isEqualTo("kb_catalog");
+    }
+
+    @Test
+    @DisplayName("同响应多工具中主调用是 finish：附加调用被丢弃，不再执行工具")
+    void finishWithAdditionalCalls_shouldDropExtras() {
+        PlannerDecision decision = finishDecision("task_final", "直接收尾", planOf("task_final"));
+        decision.setAdditionalToolCalls(List.of(
+                com.nailinai.ragent.infra.chat.ToolCall.of("call_x", "kb_lookup", Map.of())));
+        when(agentPlannerService.decide(any(), any(), any(), anyList())).thenReturn(decision);
+
+        AgentRuntimeResult result = service.run(buildRequest(), List.of(), buildRetrievalResult());
+
+        assertThat(result.getRun().getStatus()).isEqualTo("SUCCESS");
+        assertThat(result.getToolCalls()).isEmpty();
+        assertThat(result.getSteps()).noneMatch(step -> "tool_call".equals(step.getStepType()));
+    }
+
     private ChatRequest buildRequest() {
         ChatRequest request = new ChatRequest();
         request.setSessionId("sess-1");

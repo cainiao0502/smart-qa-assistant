@@ -29,6 +29,7 @@ import com.nailinai.ragent.chat.service.ChunkOptimizer;
 import com.nailinai.ragent.infra.chat.ChatClient;
 import com.nailinai.ragent.chat.service.MemoryService;
 import com.nailinai.ragent.framework.util.JsonUtils;
+import com.nailinai.ragent.util.CitationValidator;
 import com.nailinai.ragent.util.PromptBuilder;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -67,10 +68,13 @@ public class ChatServiceImpl implements ChatService {
     private final SessionExecutionGuard sessionExecutionGuard;
     private final ContextWindowManager contextWindowManager;
     private final GuardrailManager guardrailManager;
+    private final CitationValidator citationValidator;
     private final ScheduledExecutorService sseHeartbeatExecutor;
     private final int topK;
     private final int historyLimit;
     private final double defaultScoreThreshold;
+    /** 大 chunk 拆片限速（打字机演示效果）：默认关闭，LLM 流式直发；见 ChunkOptimizer 类注释 */
+    private final boolean chunkSplitEnabled;
 
     /**
      * 待决审批注册表。用 setter 注入并允许缺省：单元测试里直接 new 时不具备审批通道，
@@ -104,10 +108,12 @@ public class ChatServiceImpl implements ChatService {
                            SessionExecutionGuard sessionExecutionGuard,
                            ContextWindowManager contextWindowManager,
                            GuardrailManager guardrailManager,
+                           CitationValidator citationValidator,
                            ScheduledExecutorService sseHeartbeatExecutor,
                            @Value("${app.rag.top-k}") int topK,
                            @Value("${app.rag.reference-distance-threshold:0.4}") double referenceDistanceThreshold,
-                           @Value("${app.rag.history-limit}") int historyLimit) {
+                           @Value("${app.rag.history-limit}") int historyLimit,
+                           @Value("${app.chat.chunk-optimizer.split-enabled:false}") boolean chunkSplitEnabled) {
         this.memoryService = memoryService;
         this.chatAgentOrchestrator = chatAgentOrchestrator;
         this.finalAnswerComposer = finalAnswerComposer;
@@ -121,9 +127,11 @@ public class ChatServiceImpl implements ChatService {
         this.sessionExecutionGuard = sessionExecutionGuard;
         this.contextWindowManager = contextWindowManager;
         this.guardrailManager = guardrailManager;
+        this.citationValidator = citationValidator;
         this.sseHeartbeatExecutor = sseHeartbeatExecutor;
         this.topK = topK;
         this.historyLimit = historyLimit;
+        this.chunkSplitEnabled = chunkSplitEnabled;
         this.defaultScoreThreshold = Math.max(0.0, Math.min(1.0, 1 - referenceDistanceThreshold));
     }
 
@@ -196,7 +204,11 @@ public class ChatServiceImpl implements ChatService {
 
         ChatAgentOrchestrator.ToolOrchestrationResult orchestration = outcome.orchestration();
         try {
-            String answer = finalAnswerComposer.composeAnswer(orchestration.getFinalPrompt());
+            // 引用真实性校验：模型可能编造 references 里不存在的「片段#N」引用，
+            // 交给用户前剔除（同步路径的修正对用户完全可见）
+            String answer = citationValidator.validateAndFix(
+                    finalAnswerComposer.composeAnswer(orchestration.getFinalPrompt()),
+                    orchestration.getReferences());
             agentRunStore.completeRun(orchestration.getRunId(), orchestration.getRunStatus(), answer,
                     orchestration.getUsage());
 
@@ -435,7 +447,8 @@ public class ChatServiceImpl implements ChatService {
                             throw new IllegalStateException("sse client disconnected while sending message");
                         }
                     },
-                    chunkScheduler
+                    chunkScheduler,
+                    chunkSplitEnabled
             );
 
             try {
@@ -462,7 +475,10 @@ public class ChatServiceImpl implements ChatService {
                 chunkScheduler.shutdownNow();
             }
 
-            String answer = answerBuilder.toString().trim();
+            // 引用真实性校验：流式 delta 已实时发出、无法回撤，这里修正的是
+            // 持久化的消息与 done 事件携带的最终回答（前端以最终回答渲染正文）
+            String answer = citationValidator.validateAndFix(
+                    answerBuilder.toString().trim(), orchestration.getReferences());
             if (!StringUtils.hasText(answer)) {
                 throw new BusinessException(ErrorCode.INTERNAL_ERROR, "model returned empty content");
             }
@@ -605,25 +621,41 @@ public class ChatServiceImpl implements ChatService {
     public AgentRunDetailResponse getRunDetail(String runId) {
         AgentRunDetailResponse detail = agentRunStore.getRunDetail(runId);
         // 安全：run 详情含原始提问、最终回答与全部执行步骤，必须校验归属。
-        // agent_run 没有 owner 列，但 run 必属于某个会话，用会话消息的归属做校验。
+        // 优先用 run 自带的 owner_user_id（建 run 时从 UserIdHolder 写入）；
+        // 迁移前的历史 run 该列为 NULL，回退到旧的会话消息归属校验——
+        // 两类路径都保证「非本人不可读」，不因迁移引入放行口子。
+        Long ownerUserId = detail.getOwnerUserId();
+        if (ownerUserId != null) {
+            Long currentUserId = com.nailinai.ragent.user.context.UserContext.currentUserId();
+            if (!ownerUserId.equals(currentUserId)) {
+                throw new BusinessException(ErrorCode.NOT_FOUND, "agent run not found");
+            }
+            return detail;
+        }
         assertSessionOwner(memoryService.getSessionMessages(detail.getSessionId()));
         return detail;
     }
 
     private Map<String, Object> buildRetrievalConfig(ChatRequest request, RetrievalResult retrievalResult) {
-        return Map.of(
-                "topK", request.getTopK() == null ? topK : Math.max(1, Math.min(request.getTopK(), 20)),
-                "scoreThreshold", request.getScoreThreshold() == null
-                        ? Double.valueOf(String.format(Locale.ROOT, "%.3f", defaultScoreThreshold))
-                        : Double.valueOf(String.format(Locale.ROOT, "%.3f", Math.max(0.0, Math.min(request.getScoreThreshold(), 1.0)))),
-                "documentIds", request.getDocumentIds() == null ? List.of() : request.getDocumentIds(),
-                "fileTypes", request.getFileTypes() == null ? List.of() : request.getFileTypes(),
-                "documentNameKeyword", request.getDocumentNameKeyword() == null ? "" : request.getDocumentNameKeyword(),
-                "originalQuery", retrievalResult.getOriginalQuery(),
-                "effectiveQuery", retrievalResult.getEffectiveQuery(),
-                "queryRewritten", retrievalResult.isQueryRewritten(),
-                "reranked", retrievalResult.isReranked()
-        );
+        // LinkedHashMap 而非 Map.of：键数已到 10 个（Map.of 的上限），后续加键不再受限
+        Map<String, Object> config = new java.util.LinkedHashMap<>();
+        config.put("topK", request.getTopK() == null ? topK : Math.max(1, Math.min(request.getTopK(), 20)));
+        config.put("scoreThreshold", request.getScoreThreshold() == null
+                ? Double.valueOf(String.format(Locale.ROOT, "%.3f", defaultScoreThreshold))
+                : Double.valueOf(String.format(Locale.ROOT, "%.3f", Math.max(0.0, Math.min(request.getScoreThreshold(), 1.0)))));
+        config.put("documentIds", request.getDocumentIds() == null ? List.of() : request.getDocumentIds());
+        config.put("fileTypes", request.getFileTypes() == null ? List.of() : request.getFileTypes());
+        config.put("documentNameKeyword", request.getDocumentNameKeyword() == null ? "" : request.getDocumentNameKeyword());
+        config.put("originalQuery", retrievalResult.getOriginalQuery());
+        config.put("effectiveQuery", retrievalResult.getEffectiveQuery());
+        config.put("queryRewritten", retrievalResult.isQueryRewritten());
+        config.put("reranked", retrievalResult.isReranked());
+        // 通道可见性：哪个通道因异常退出了本轮检索（空列表 = 全部正常）。
+        // 通道静默降级会让混合检索无声变成单通道检索，必须让调用方看得到。
+        config.put("degradedChannels", retrievalResult.getDegradedChannels() == null
+                ? List.of()
+                : retrievalResult.getDegradedChannels());
+        return config;
     }
 
     private void streamClarify(ChatRequest request,
@@ -708,7 +740,8 @@ public class ChatServiceImpl implements ChatService {
                         throw new IllegalStateException("sse client disconnected while sending message");
                     }
                 },
-                chunkScheduler
+                chunkScheduler,
+                chunkSplitEnabled
         );
 
         try {

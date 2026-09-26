@@ -12,8 +12,8 @@ import org.apache.ibatis.annotations.Delete;
 public interface AgentRunMapper {
 
     @Insert("""
-            INSERT INTO agent_run (run_id, session_id, kb_id, user_goal, status, final_answer)
-            VALUES (#{runId}, #{sessionId}, #{kbId}, #{userGoal}, #{status}, #{finalAnswer})
+            INSERT INTO agent_run (run_id, session_id, kb_id, user_goal, status, final_answer, owner_user_id)
+            VALUES (#{runId}, #{sessionId}, #{kbId}, #{userGoal}, #{status}, #{finalAnswer}, #{ownerUserId})
             """)
     @Options(useGeneratedKeys = true, keyProperty = "id")
     int insert(AgentRunEntity agentRun);
@@ -26,6 +26,7 @@ public interface AgentRunMapper {
                    user_goal AS userGoal,
                    status,
                    final_answer AS finalAnswer,
+                   owner_user_id AS ownerUserId,
                    duration_ms AS durationMs,
                    llm_calls AS llmCalls,
                    input_tokens AS inputTokens,

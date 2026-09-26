@@ -19,6 +19,7 @@ import com.nailinai.ragent.framework.common.ErrorCode;
 import com.nailinai.ragent.infra.chat.ChatClient;
 import com.nailinai.ragent.mapper.ChatMessageMapper;
 import com.nailinai.ragent.mapper.KnowledgeBaseMapper;
+import com.nailinai.ragent.util.CitationValidator;
 import com.nailinai.ragent.util.PromptBuilder;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
@@ -87,7 +88,7 @@ class ChatServiceImplTest {
                 memoryService, chatAgentOrchestrator, finalAnswerComposer, agentRunStore,
                 promptBuilder, chatClient, chatMessageMapper, knowledgeBaseMapper,
                 intentClassifier, intentRouter, sessionExecutionGuard, contextWindowManager,
-                guardrailManager, sseHeartbeatExecutor, 4, 0.4, 6);
+                guardrailManager, new CitationValidator(), sseHeartbeatExecutor, 4, 0.4, 6, false);
         lenient().when(contextWindowManager.trimHistory(any(), anyInt()))
                 .thenAnswer(invocation -> invocation.getArgument(0));
     }

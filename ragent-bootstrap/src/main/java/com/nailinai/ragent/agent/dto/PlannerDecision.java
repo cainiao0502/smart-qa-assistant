@@ -1,5 +1,6 @@
 package com.nailinai.ragent.agent.dto;
 
+import com.nailinai.ragent.infra.chat.ToolCall;
 import com.nailinai.ragent.infra.chat.TokenUsage;
 import lombok.Data;
 
@@ -11,6 +12,15 @@ public class PlannerDecision {
 
     private List<AgentPlanItem> plan;
     private PlannerCurrentAction currentAction;
+
+    /**
+     * 同一响应中除主调用外的其余业务工具调用。
+     *
+     * <p>模型常在一轮里发起多个相互独立的调用（原生并行工具调用协议）。运行时会按序
+     * 执行它们并全部回灌观察，而不是像旧实现那样只执行第一个、其余要求模型重新发起
+     * ——重复决策每次都要多付一次 Planner 调用与一步预算。</p>
+     */
+    private List<ToolCall> additionalToolCalls;
 
     /** 本次 Planner（LLM）调用的 token 用量，供主循环累计成本 */
     private TokenUsage usage = TokenUsage.EMPTY;

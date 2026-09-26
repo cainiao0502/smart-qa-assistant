@@ -171,10 +171,15 @@ public class AgentPlannerService {
                 .findFirst()
                 .orElse(businessCalls.isEmpty() ? null : businessCalls.get(0));
 
-        // 每步只执行一个工具，其余调用必须如实告知模型，否则它会误以为那些调用已经发生
-        List<ToolCall> skippedCalls = actionCall == null
-                ? List.of()
-                : businessCalls.stream().filter(call -> call != actionCall).toList();
+        // 同响应的其余业务调用：模型常在一轮里发起多个相互独立的调用（原生并行工具调用协议），
+        // 运行时会按序执行它们并全部回灌观察。主调用是 finish 时其余调用直接丢弃——
+        // finish 表示模型认为信息已足够，不应再执行新工具。
+        List<ToolCall> additionalCalls = List.of();
+        if (actionCall != null && !TOOL_FINISH.equals(actionCall.name()) && businessCalls.size() > 1) {
+            additionalCalls = businessCalls.stream()
+                    .filter(call -> call != actionCall)
+                    .toList();
+        }
 
         if (actionCall == null) {
             // 只提交了计划、且没有文本输出 → 本轮「无动作」，应进入下一轮而不是收尾。
@@ -217,7 +222,7 @@ public class AgentPlannerService {
             return decision;
         }
 
-        return toolCallDecision(actionCall, skippedCalls, plan, completedTaskKeys);
+        return toolCallDecision(actionCall, additionalCalls, plan, completedTaskKeys);
     }
 
     /**
@@ -254,7 +259,7 @@ public class AgentPlannerService {
     }
 
     private PlannerDecision toolCallDecision(ToolCall call,
-                                             List<ToolCall> skippedCalls,
+                                             List<ToolCall> additionalCalls,
                                              List<AgentPlanItem> plan,
                                              Set<String> completedTaskKeys) {
         PlannerDecision decision = new PlannerDecision();
@@ -265,7 +270,8 @@ public class AgentPlannerService {
         action.setTool(call.name());
         action.setArguments(new LinkedHashMap<>(call.arguments()));
         action.setTaskKey(resolveCurrentTaskKey(plan, completedTaskKeys));
-        action.setReason(buildToolCallReason(call, skippedCalls));
+        action.setReason(buildToolCallReason(call, additionalCalls));
+        decision.setAdditionalToolCalls(additionalCalls == null ? List.of() : List.copyOf(additionalCalls));
         decision.setCurrentAction(action);
         return decision;
     }
@@ -273,16 +279,17 @@ public class AgentPlannerService {
     /**
      * 拼接本轮工具调用的说明文字。
      *
-     * <p>每步只执行一个工具，因此模型并发返回的其余调用会被丢弃。若不告知，模型会误以为
-     * 那些调用已经发生，进而在后续步骤中重复或跳过动作。该文字会随 {@code AgentStep.reason}
-     * 持久化，并在下一轮上下文中回灌，是可靠的告知通道。
+     * <p>同一响应中的多个业务工具调用会按序全部执行（见 {@code additionalToolCalls}），
+     * 说明文字告知模型这一事实，让它敢于在下一轮继续发起并行调用，而不是误以为
+     * 只有第一个调用生效。</p>
      */
-    private String buildToolCallReason(ToolCall call, List<ToolCall> skippedCalls) {
+    private String buildToolCallReason(ToolCall call, List<ToolCall> additionalCalls) {
         StringBuilder reason = new StringBuilder("Planner selected tool " + call.name() + ".");
-        if (skippedCalls != null && !skippedCalls.isEmpty()) {
-            reason.append(" NOTE: only one tool call is executed per step. ")
-                    .append("These requested calls were NOT executed and must be re-issued in the next step: ")
-                    .append(skippedCalls.stream().map(ToolCall::name).collect(Collectors.joining(", ")))
+        if (additionalCalls != null && !additionalCalls.isEmpty()) {
+            reason.append(" ")
+                    .append(additionalCalls.size())
+                    .append(" additional tool call(s) from the same response will be executed right after this one: ")
+                    .append(additionalCalls.stream().map(ToolCall::name).collect(Collectors.joining(", ")))
                     .append(".");
         }
         return reason.toString();
@@ -338,7 +345,7 @@ public class AgentPlannerService {
                 Workflow:
                 - On the first decision, call %s to publish a plan with 2 to 5 tasks, AND call your first action tool in the SAME turn (parallel tool calls are supported and expected).
                 - Never call %s on its own: a turn that only submits a plan makes no progress.
-                - Then call exactly one action tool per step (a knowledge tool, an MCP tool, or %s).
+                - Then call action tools (a knowledge tool, an MCP tool, or %s). You may issue SEVERAL INDEPENDENT action tools in the SAME turn — they will all be executed in order and their observations returned together. When a call depends on the result of a previous one, issue it alone and wait for its observation.
                 - Call %s again only when the plan genuinely needs to change.
 
                 Planning rules:

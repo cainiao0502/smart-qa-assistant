@@ -17,7 +17,10 @@ import com.nailinai.ragent.dto.response.ToolCallTraceResponse;
 import com.nailinai.ragent.entity.ChatMessage;
 import com.nailinai.ragent.framework.common.BusinessException;
 import com.nailinai.ragent.framework.common.ErrorCode;
+import com.nailinai.ragent.infra.chat.ChatClient;
+import com.nailinai.ragent.infra.chat.ToolCall;
 import com.nailinai.ragent.infra.chat.ToolSpec;
+import com.nailinai.ragent.user.context.UserIdHolder;
 import com.nailinai.ragent.util.ReferenceUtils;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -152,6 +155,10 @@ public class AgentRuntimeService {
                 .sessionId(request.getSessionId())
                 .kbId(request.getKbId())
                 .userGoal(request.getQuestion())
+                // 归属用户：取值走 UserIdHolder——agent 循环可能运行在异步线程，
+                // 直接读 Sa-Token 的 ThreadLocal 会失败（与检索归属过滤同一先例）。
+                // 写 NULL 的历史 run 由 getRunDetail 回退会话消息校验兜底。
+                .ownerUserId(UserIdHolder.get())
                 .status("RUNNING")
                 .createdAt(now)
                 .updatedAt(now);
@@ -363,175 +370,196 @@ public class AgentRuntimeService {
                 break;
             }
 
-            Map<String, Object> normalizedArguments = decision.getArguments() == null
-                    ? Map.of()
-                    : new LinkedHashMap<>(decision.getArguments());
-
-            // 工具闸门：把「该不该允许这次调用」的策略外置（pi 的 beforeToolCall 同构）。
-            // 命中拦截时不执行工具，只落一条守卫步骤，让模型在下一轮改走别的任务或直接收尾。
-            ToolGateDecision gateDecision = consultToolGates(
-                    initialRun.getRunId(), currentActionKey, decision.getTool(),
-                    normalizedArguments, toolCallsPerTask, guardBlockCount, listener);
-            if (gateDecision.blocked()) {
-                // 不同策略拦下调用后运行时的处置不同：预算类意味着"这个任务用掉了它的机会"，
-                // 要把它从可推进目标里摘掉；授权类只是"这一次没被批准"，任务本身没有用尽预算，
-                // 把任务封顶会让用户误以为整个任务失败了。
-                boolean budgetRelated = gateDecision.category() == ToolGateDecision.Category.BUDGET;
-                if (budgetRelated) {
-                    guardBlockCount++;
-                    if (StringUtils.hasText(currentActionKey)) {
-                        // 封顶即生效：本轮任务从"可推进目标"里移除，下一轮切到别的任务
-                        budgetExhaustedTaskKeys.add(currentActionKey);
-                    }
-                } else {
-                    approvalBlockCount++;
+            // 同一响应中的全部业务工具调用按序执行（主调用在前，其余为 additionalToolCalls）。
+            // 每个调用独立走「闸门 → 执行 → 记录」：某个调用被拦或失败不影响后续调用，
+            // 全部记入同一个 step（一次 Planner 决策）的轨迹与任务预算。
+            List<PlannedToolCall> plannedCalls = new ArrayList<>();
+            plannedCalls.add(new PlannedToolCall(
+                    decision.getTool(),
+                    decision.getArguments() == null ? Map.of() : new LinkedHashMap<>(decision.getArguments())));
+            if (decision.getAdditionalToolCalls() != null) {
+                for (ToolCall extraCall : decision.getAdditionalToolCalls()) {
+                    plannedCalls.add(new PlannedToolCall(
+                            extraCall.name(),
+                            extraCall.arguments() == null ? Map.of() : new LinkedHashMap<>(extraCall.arguments())));
                 }
-                AgentStep guardStep = AgentStep.builder()
+            }
+
+            boolean abortRun = false;
+            for (PlannedToolCall planned : plannedCalls) {
+                Map<String, Object> normalizedArguments = planned.arguments();
+
+                // 工具闸门：把「该不该允许这次调用」的策略外置（pi 的 beforeToolCall 同构）。
+                // 命中拦截时不执行工具，只落一条守卫步骤，让模型在下一轮改走别的任务或直接收尾。
+                ToolGateDecision gateDecision = consultToolGates(
+                        initialRun.getRunId(), currentActionKey, planned.toolName(),
+                        normalizedArguments, toolCallsPerTask, guardBlockCount, listener);
+                if (gateDecision.blocked()) {
+                    // 不同策略拦下调用后运行时的处置不同：预算类意味着"这个任务用掉了它的机会"，
+                    // 要把它从可推进目标里摘掉；授权类只是"这一次没被批准"，任务本身没有用尽预算，
+                    // 把任务封顶会让用户误以为整个任务失败了。
+                    boolean budgetRelated = gateDecision.category() == ToolGateDecision.Category.BUDGET;
+                    if (budgetRelated) {
+                        guardBlockCount++;
+                        if (StringUtils.hasText(currentActionKey)) {
+                            // 封顶即生效：本轮任务从"可推进目标"里移除，下一轮切到别的任务
+                            budgetExhaustedTaskKeys.add(currentActionKey);
+                        }
+                    } else {
+                        approvalBlockCount++;
+                    }
+                    AgentStep guardStep = AgentStep.builder()
+                            .runId(initialRun.getRunId())
+                            .stepIndex(stepIndex)
+                            .stepType("guard")
+                            .toolName(planned.toolName())
+                            .arguments(withTaskKey(normalizedArguments, currentActionKey))
+                            .reason(budgetRelated
+                                    ? "Tool call blocked by gate policy: per-task budget exceeded."
+                                    : "Tool call blocked by gate policy: approval not granted.")
+                            .observationSummary(gateDecision.reason())
+                            .status("SKIPPED")
+                            .durationMs(0L)
+                            .build();
+                    steps.add(guardStep);
+                    agentRunStore.appendStep(guardStep);
+                    listener.onStepCompleted(guardStep);
+                    listener.onPlanUpdated(initialRun.getRunId(), plan, currentActionKey,
+                            List.copyOf(completedTaskKeys), List.copyOf(skippedTaskKeys), List.copyOf(unresolvedTaskKeys));
+
+                    if (budgetRelated && guardBlockCount >= maxGuardBlocksPerRun) {
+                        // 硬兜底：模型不听劝就收尾，保住「答一部分 + 说明缺口」而不是把步数耗光
+                        terminalStatus = "PARTIAL";
+                        finalInstruction = "单任务工具调用已达上限，请基于已获得的信息给出尽可能完整的回答，"
+                                + "并明确指出哪些子问题尚未解决。";
+                        abortRun = true;
+                        break;
+                    }
+                    if (!budgetRelated && approvalBlockCount >= maxApprovalBlocksPerRun) {
+                        // 授权兜底：避免模型反复索要同一权限，把用户拖进反复确认
+                        terminalStatus = "PARTIAL";
+                        finalInstruction = "本次运行中有工具调用未获得授权，请基于已获得的信息给出尽可能完整的回答，"
+                                + "并明确说明哪些步骤因缺少授权而没有执行。";
+                        abortRun = true;
+                        break;
+                    }
+                    continue;
+                }
+
+                ToolExecutor executor;
+                try {
+                    executor = toolExecutorRegistry.getRequired(planned.toolName());
+                } catch (Exception exception) {
+                    // 模型可能请求不存在的工具。参照 pi 的 prepareToolCall：此处不能打断整轮循环，
+                    // 而要产出一条结构化的失败步骤，让模型在下一轮改用可用工具。
+                    ToolFailureType failureType = classifyFailure(exception);
+                    String observation = failureType.toObservation(
+                            planned.toolName(), rootMessage(exception), availableToolNames());
+                    appendFailedStep(initialRun, stepIndex, decision,
+                            withTaskKey(normalizedArguments, currentActionKey),
+                            planned.toolName(), planned.toolName(), "unknown",
+                            failureType, observation, 0L, listener, steps, toolCalls);
+                    // 未知工具虽未真实执行，也要计入当前任务的调用预算：
+                    // 否则模型反复请求不存在的工具会把 maxSteps 全部耗光，而不触发每任务预算守卫
+                    if (StringUtils.hasText(currentActionKey)) {
+                        toolCallsPerTask.merge(currentActionKey, 1, Integer::sum);
+                    }
+                    listener.onPlanUpdated(initialRun.getRunId(), plan, currentActionKey,
+                            List.copyOf(completedTaskKeys), List.copyOf(skippedTaskKeys), List.copyOf(unresolvedTaskKeys));
+                    continue;
+                }
+
+                long startTime = System.currentTimeMillis();
+                ToolExecutionResult toolResult;
+                String status = "SUCCESS";
+                String observationSummary;
+                ToolCallTraceResponse toolTrace = null;
+
+                AgentStep runningStep = AgentStep.builder()
                         .runId(initialRun.getRunId())
                         .stepIndex(stepIndex)
-                        .stepType("guard")
-                        .toolName(decision.getTool())
+                        .stepType("tool_call")
+                        .toolName(executor.getToolName())
                         .arguments(withTaskKey(normalizedArguments, currentActionKey))
-                        .reason(budgetRelated
-                                ? "Tool call blocked by gate policy: per-task budget exceeded."
-                                : "Tool call blocked by gate policy: approval not granted.")
-                        .observationSummary(gateDecision.reason())
-                        .status("SKIPPED")
+                        .reason(decision.getReason())
+                        .status("RUNNING")
                         .durationMs(0L)
                         .build();
-                steps.add(guardStep);
-                agentRunStore.appendStep(guardStep);
-                listener.onStepCompleted(guardStep);
+                listener.onStepStarted(runningStep);
+
+                try {
+                    toolResult = callWithTimeout(toolTimeoutMs, "tool \"" + executor.getToolName() + "\" execution",
+                            () -> executor.execute(
+                                    normalizedArguments,
+                                    ToolContext.builder()
+                                            .request(request)
+                                            .history(history)
+                                            .retrievedChunks(retrievalResult.getChunks())
+                                            .build()
+                            ));
+                    observationSummary = summaryFrom(toolResult.getObservation(), toolResult.getSummary());
+                    if (toolResult.getTrace() != null) {
+                        toolTrace = toolResult.getTrace();
+                        toolCalls.add(toolTrace);
+                        status = StringUtils.hasText(toolTrace.getStatus())
+                                ? toolTrace.getStatus()
+                                : status;
+                    }
+                    if (toolResult.getReferences() != null && !toolResult.getReferences().isEmpty()) {
+                        extraReferences.addAll(toolResult.getReferences());
+                    }
+                    if (StringUtils.hasText(toolResult.getSupplementalContext())) {
+                        supplementalContexts.add(toolResult.getSupplementalContext().trim());
+                        answerMode = "rag+tool";
+                    }
+                } catch (Exception exception) {
+                    ToolFailureType failureType = classifyFailure(exception);
+                    status = "FAILED";
+                    observationSummary = failureType.toObservation(
+                            executor.getToolName(), rootMessage(exception), availableToolNames());
+                    // 只标记「发生过硬失败」，终态在循环结束后按收尾方式统一裁决
+                    anyHardFailure = true;
+                    toolTrace = ToolCallTraceResponse.builder()
+                            .toolName(executor.getToolName())
+                            .displayName(executor.getDisplayName())
+                            .source(executor.getSource())
+                            .status("FAILED")
+                            .arguments(normalizedArguments)
+                            .summary(observationSummary)
+                            .failureType(failureType.name())
+                            .durationMs(System.currentTimeMillis() - startTime)
+                            .build();
+                    toolCalls.add(toolTrace);
+                }
+
+                if (toolTrace != null) {
+                    listener.onToolResult(toolTrace);
+                }
+
+                AgentStep step = AgentStep.builder()
+                        .runId(initialRun.getRunId())
+                        .stepIndex(stepIndex)
+                        .stepType("tool_call")
+                        .toolName(executor.getToolName())
+                        .arguments(withTaskKey(normalizedArguments, currentActionKey))
+                        .reason(decision.getReason())
+                        .observationSummary(observationSummary)
+                        .status(status)
+                        .durationMs(System.currentTimeMillis() - startTime)
+                        .build();
+                steps.add(step);
+                agentRunStore.appendStep(step);
+                listener.onStepCompleted(step);
                 listener.onPlanUpdated(initialRun.getRunId(), plan, currentActionKey,
                         List.copyOf(completedTaskKeys), List.copyOf(skippedTaskKeys), List.copyOf(unresolvedTaskKeys));
 
-                if (budgetRelated && guardBlockCount >= maxGuardBlocksPerRun) {
-                    // 硬兜底：模型不听劝就收尾，保住「答一部分 + 说明缺口」而不是把步数耗光
-                    terminalStatus = "PARTIAL";
-                    finalInstruction = "单任务工具调用已达上限，请基于已获得的信息给出尽可能完整的回答，"
-                            + "并明确指出哪些子问题尚未解决。";
-                    break;
-                }
-                if (!budgetRelated && approvalBlockCount >= maxApprovalBlocksPerRun) {
-                    // 授权兜底：避免模型反复索要同一权限，把用户拖进反复确认
-                    terminalStatus = "PARTIAL";
-                    finalInstruction = "本次运行中有工具调用未获得授权，请基于已获得的信息给出尽可能完整的回答，"
-                            + "并明确说明哪些步骤因缺少授权而没有执行。";
-                    break;
-                }
-                continue;
-            }
-
-            ToolExecutor executor;
-            try {
-                executor = toolExecutorRegistry.getRequired(decision.getTool());
-            } catch (Exception exception) {
-                // 模型可能请求不存在的工具。参照 pi 的 prepareToolCall：此处不能打断整轮循环，
-                // 而要产出一条结构化的失败步骤，让模型在下一轮改用可用工具。
-                ToolFailureType failureType = classifyFailure(exception);
-                String observation = failureType.toObservation(
-                        decision.getTool(), rootMessage(exception), availableToolNames());
-                appendFailedStep(initialRun, stepIndex, decision,
-                        withTaskKey(normalizedArguments, currentActionKey),
-                        decision.getTool(), decision.getTool(), "unknown",
-                        failureType, observation, 0L, listener, steps, toolCalls);
-                // 未知工具虽未真实执行，也要计入当前任务的调用预算：
-                // 否则模型反复请求不存在的工具会把 maxSteps 全部耗光，而不触发每任务预算守卫
+                // 计入本任务的调用预算：失败也算——否则失败重试会把守卫绕过去
                 if (StringUtils.hasText(currentActionKey)) {
                     toolCallsPerTask.merge(currentActionKey, 1, Integer::sum);
                 }
-                listener.onPlanUpdated(initialRun.getRunId(), plan, currentActionKey,
-                        List.copyOf(completedTaskKeys), List.copyOf(skippedTaskKeys), List.copyOf(unresolvedTaskKeys));
-                continue;
             }
-
-            long startTime = System.currentTimeMillis();
-            ToolExecutionResult toolResult;
-            String status = "SUCCESS";
-            String observationSummary;
-            ToolCallTraceResponse toolTrace = null;
-
-            AgentStep runningStep = AgentStep.builder()
-                    .runId(initialRun.getRunId())
-                    .stepIndex(stepIndex)
-                    .stepType("tool_call")
-                    .toolName(executor.getToolName())
-                    .arguments(withTaskKey(normalizedArguments, currentActionKey))
-                    .reason(decision.getReason())
-                    .status("RUNNING")
-                    .durationMs(0L)
-                    .build();
-            listener.onStepStarted(runningStep);
-
-            try {
-                toolResult = callWithTimeout(toolTimeoutMs, "tool \"" + executor.getToolName() + "\" execution",
-                        () -> executor.execute(
-                                normalizedArguments,
-                                ToolContext.builder()
-                                        .request(request)
-                                        .history(history)
-                                        .retrievedChunks(retrievalResult.getChunks())
-                                        .build()
-                        ));
-                observationSummary = summaryFrom(toolResult.getObservation(), toolResult.getSummary());
-                if (toolResult.getTrace() != null) {
-                    toolTrace = toolResult.getTrace();
-                    toolCalls.add(toolTrace);
-                    status = StringUtils.hasText(toolTrace.getStatus())
-                            ? toolTrace.getStatus()
-                            : status;
-                }
-                if (toolResult.getReferences() != null && !toolResult.getReferences().isEmpty()) {
-                    extraReferences.addAll(toolResult.getReferences());
-                }
-                if (StringUtils.hasText(toolResult.getSupplementalContext())) {
-                    supplementalContexts.add(toolResult.getSupplementalContext().trim());
-                    answerMode = "rag+tool";
-                }
-            } catch (Exception exception) {
-                ToolFailureType failureType = classifyFailure(exception);
-                status = "FAILED";
-                observationSummary = failureType.toObservation(
-                        executor.getToolName(), rootMessage(exception), availableToolNames());
-                // 只标记「发生过硬失败」，终态在循环结束后按收尾方式统一裁决
-                anyHardFailure = true;
-                toolTrace = ToolCallTraceResponse.builder()
-                        .toolName(executor.getToolName())
-                        .displayName(executor.getDisplayName())
-                        .source(executor.getSource())
-                        .status("FAILED")
-                        .arguments(normalizedArguments)
-                        .summary(observationSummary)
-                        .failureType(failureType.name())
-                        .durationMs(System.currentTimeMillis() - startTime)
-                        .build();
-                toolCalls.add(toolTrace);
-            }
-
-            if (toolTrace != null) {
-                listener.onToolResult(toolTrace);
-            }
-
-            AgentStep step = AgentStep.builder()
-                    .runId(initialRun.getRunId())
-                    .stepIndex(stepIndex)
-                    .stepType("tool_call")
-                    .toolName(executor.getToolName())
-                    .arguments(withTaskKey(normalizedArguments, currentActionKey))
-                    .reason(decision.getReason())
-                    .observationSummary(observationSummary)
-                    .status(status)
-                    .durationMs(System.currentTimeMillis() - startTime)
-                    .build();
-            steps.add(step);
-            agentRunStore.appendStep(step);
-            listener.onStepCompleted(step);
-            listener.onPlanUpdated(initialRun.getRunId(), plan, currentActionKey,
-                    List.copyOf(completedTaskKeys), List.copyOf(skippedTaskKeys), List.copyOf(unresolvedTaskKeys));
-
-            // 计入本任务的调用预算：失败也算——否则失败重试会把守卫绕过去
-            if (StringUtils.hasText(currentActionKey)) {
-                toolCallsPerTask.merge(currentActionKey, 1, Integer::sum);
+            if (abortRun) {
+                break;
             }
         }
 
@@ -1062,5 +1090,9 @@ public class AgentRuntimeService {
     /** 判断是否为「本轮仅更新计划、无实际动作」的继续信号 */
     private boolean isContinueDecision(PlannerDecision decision) {
         return decision != null && "continue".equalsIgnoreCase(decision.getAction());
+    }
+
+    /** 一次 Planner 决策内待执行的工具调用（主调用与同响应的附加调用统一表示） */
+    private record PlannedToolCall(String toolName, Map<String, Object> arguments) {
     }
 }
