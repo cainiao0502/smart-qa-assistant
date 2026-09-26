@@ -1,4 +1,5 @@
 import { ref } from 'vue'
+import { sanitizeHtml } from '@/utils/sanitizeHtml'
 
 const HIGHLIGHT_LANGUAGE_LOADERS = [
   ['bash', () => import('highlight.js/lib/languages/bash')],
@@ -90,8 +91,9 @@ export function useMarkdownRenderer() {
     if (markdownCache.has(cacheKey)) {
       return markdownCache.get(cacheKey)
     }
+    // marked 不做 XSS 消毒：输出可能复述文档/工具内容，必须过 DOMPurify 再进 v-html
     const html = markedInstance
-      ? markedInstance.parse(normalized)
+      ? sanitizeHtml(markedInstance.parse(normalized))
       : escapeHtml(normalized).replace(/\n/g, '<br>')
     markdownCache.set(cacheKey, html)
     if (markdownCache.size > 80) {

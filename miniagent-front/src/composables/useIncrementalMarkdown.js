@@ -1,4 +1,5 @@
 import { ref } from 'vue'
+import { sanitizeHtml } from '@/utils/sanitizeHtml'
 
 /**
  * useIncrementalMarkdown - Incremental Markdown renderer that only parses new content.
@@ -82,7 +83,7 @@ export function useIncrementalMarkdown() {
       htmlSegments.push(html)
       parsedOffset = fullText.length
     }
-    renderedHtml.value = htmlSegments.join('')
+    renderedHtml.value = sanitizeHtml(htmlSegments.join(''))
   }
 
   function reset() {
@@ -187,14 +188,14 @@ export function useIncrementalMarkdown() {
       const trailing = fullText.substring(trailingStart)
       html += escapeHtml(trailing).replace(/\n/g, '<br>')
     }
-    renderedHtml.value = html
+    renderedHtml.value = sanitizeHtml(html)
   }
 
   function renderInlineMarkdown(text) {
     if (!text) return ''
     if (markedInstance) {
       try {
-        return markedInstance.parse(text)
+        return sanitizeHtml(markedInstance.parse(text))
       } catch {
         return escapeHtml(text).replace(/\n/g, '<br>')
       }
