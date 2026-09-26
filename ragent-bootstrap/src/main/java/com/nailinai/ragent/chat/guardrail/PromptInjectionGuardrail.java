@@ -49,7 +49,9 @@ public class PromptInjectionGuardrail implements InputGuardrail {
         String normalized = request.getQuestion().trim().toLowerCase(Locale.ROOT);
         for (String pattern : INJECTION_PATTERNS) {
             if (normalized.contains(pattern)) {
-                return GuardrailResult.fail("输入包含疑似提示注入内容，已被拦截");
+                // 告知命中规则：规则黑名单对日常表达有误伤（如「你其实是……」），
+                // 让用户知道拦了什么才能改写问题绕过误伤
+                return GuardrailResult.fail("输入包含疑似提示注入内容（命中规则：" + pattern + "），已被拦截");
             }
         }
         return GuardrailResult.pass();

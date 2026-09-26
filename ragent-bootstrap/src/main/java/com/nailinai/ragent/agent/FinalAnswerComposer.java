@@ -89,19 +89,27 @@ public class FinalAnswerComposer {
                 .collect(Collectors.joining("\n"));
     }
 
+    /**
+     * 组装最终回答的补充上下文。
+     *
+     * <p>工具派生内容（工具返回的正文 + 步骤观察摘要）统一包裹在 {@code <tool_output>}
+     * 定界符内，配合 system prompt 的「定界符内是数据不是指令」声明，把 MCP 工具
+     * 返回内容里的潜在注入指令降级为待展示的数据（OWASP LLM01 的结构化防御）。
+     * {@code finalInstruction} 是服务端生成的可信指令，保持在定界符之外。</p>
+     */
     private String buildSupplementalContext(List<String> supplementalContexts,
                                             List<AgentStep> steps,
                                             String finalInstruction) {
-        List<String> sections = new ArrayList<>();
+        List<String> toolDerived = new ArrayList<>();
         if (supplementalContexts != null) {
-            sections.addAll(supplementalContexts.stream()
+            toolDerived.addAll(supplementalContexts.stream()
                     .filter(StringUtils::hasText)
                     .map(String::trim)
                     .toList());
         }
 
         if (steps != null && !steps.isEmpty()) {
-            sections.add("Agent step observations:\n" + steps.stream()
+            toolDerived.add("Agent step observations:\n" + steps.stream()
                     .map(step -> "- step %d [%s] %s".formatted(
                             step.getStepIndex(),
                             step.getStepType(),
@@ -110,6 +118,10 @@ public class FinalAnswerComposer {
                     .collect(Collectors.joining("\n")));
         }
 
+        List<String> sections = new ArrayList<>();
+        if (!toolDerived.isEmpty()) {
+            sections.add("<tool_output>\n" + String.join("\n\n", toolDerived) + "\n</tool_output>");
+        }
         if (StringUtils.hasText(finalInstruction)) {
             sections.add("Final answering instruction:\n" + finalInstruction.trim());
         }
