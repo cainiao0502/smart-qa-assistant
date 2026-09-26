@@ -128,6 +128,64 @@ class MultiChannelRetrieverTest {
         assertThat(results).isEmpty();
     }
 
+    @Test
+    @DisplayName("传入状态收集器时记录每个通道的参与/降级状态")
+    void statusSink_shouldRecordChannelParticipation() {
+        SearchChannel broken = mock(SearchChannel.class);
+        when(broken.name()).thenReturn("broken");
+        when(broken.search(any())).thenThrow(new RuntimeException("channel down"));
+
+        SearchChannel healthy = channel("keyword", List.of(result("keyword", 1L, 0.9)));
+
+        SearchPostProcessor processor = mock(SearchPostProcessor.class);
+        when(processor.order()).thenReturn(1);
+        when(processor.process(anyList(), any())).thenAnswer(invocation -> invocation.getArgument(0));
+
+        MultiChannelRetriever retriever = new MultiChannelRetriever(List.of(broken, healthy), List.of(processor));
+
+        List<ChannelStatus> statusSink = new java.util.ArrayList<>();
+        retriever.retrieve(
+                SearchRequest.of(1L, "问题", null, 4, null, null, null, null),
+                SearchContext.of("问题", "问题", 4, 0.4),
+                statusSink);
+
+        assertThat(statusSink).extracting(ChannelStatus::channel, ChannelStatus::degraded)
+                .containsExactlyInAnyOrder(
+                        org.assertj.core.groups.Tuple.tuple("broken", true),
+                        org.assertj.core.groups.Tuple.tuple("keyword", false));
+        assertThat(statusSink.stream().filter(ChannelStatus::degraded).findFirst().orElseThrow().error())
+                .contains("channel down");
+    }
+
+    @Test
+    @DisplayName("通道恢复后状态回到 ok，连续失败计数清零")
+    void channelRecovery_shouldResetDegradedState() {
+        SearchChannel flaky = mock(SearchChannel.class);
+        when(flaky.name()).thenReturn("keyword");
+        when(flaky.search(any())).thenThrow(new RuntimeException("down"))
+                .thenThrow(new RuntimeException("down"))
+                .thenReturn(List.of(result("keyword", 1L, 0.9)));
+
+        SearchPostProcessor processor = mock(SearchPostProcessor.class);
+        when(processor.order()).thenReturn(1);
+        when(processor.process(anyList(), any())).thenAnswer(invocation -> invocation.getArgument(0));
+
+        MultiChannelRetriever retriever = new MultiChannelRetriever(List.of(flaky), List.of(processor));
+        SearchRequest request = SearchRequest.of(1L, "问题", null, 4, null, null, null, null);
+        SearchContext context = SearchContext.of("问题", "问题", 4, 0.4);
+
+        List<ChannelStatus> firstRun = new java.util.ArrayList<>();
+        retriever.retrieve(request, context, firstRun);
+        List<ChannelStatus> secondRun = new java.util.ArrayList<>();
+        retriever.retrieve(request, context, secondRun);
+        List<ChannelStatus> thirdRun = new java.util.ArrayList<>();
+        retriever.retrieve(request, context, thirdRun);
+
+        assertThat(firstRun).allMatch(ChannelStatus::degraded);
+        assertThat(secondRun).allMatch(ChannelStatus::degraded);
+        assertThat(thirdRun).allMatch(status -> !status.degraded());
+    }
+
     private SearchChannel channel(String name, List<SearchResult> results) {
         SearchChannel channel = mock(SearchChannel.class);
         when(channel.name()).thenReturn(name);

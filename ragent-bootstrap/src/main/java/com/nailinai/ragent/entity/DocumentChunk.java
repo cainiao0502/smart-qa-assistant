@@ -14,6 +14,8 @@ public class DocumentChunk {
     private String fileType;
     private Integer chunkIndex;
     private String chunkText;
+    /** 分词结果（KeywordTokenizer，空格分隔）：tsv 生成列的输入，入库与查询两侧的分词契约 */
+    private String chunkTokens;
     private Integer tokenEstimate;
     private String embeddingLiteral;
     private Integer paragraphIndex;

@@ -13,6 +13,7 @@ import com.nailinai.ragent.mapper.DocumentMapper;
 import com.nailinai.ragent.mapper.DocumentTaskMapper;
 import com.nailinai.ragent.chat.service.DocumentParser;
 import com.nailinai.ragent.chat.service.DocumentTaskService;
+import com.nailinai.ragent.chat.retrieve.KeywordTokenizer;
 import com.nailinai.ragent.infra.embedding.EmbeddingClient;
 import com.nailinai.ragent.chat.service.TextChunker;
 import com.nailinai.ragent.framework.util.TokenEstimateUtils;
@@ -271,6 +272,8 @@ public class DocumentTaskServiceImpl implements DocumentTaskService {
             chunk.setDocId(document.getId());
             chunk.setChunkIndex(i);
             chunk.setChunkText(chunks.get(i));
+            // 分词契约：与查询侧共用 KeywordTokenizer，tsv 生成列据此建 GIN 索引
+            chunk.setChunkTokens(KeywordTokenizer.toTokenString(chunks.get(i)));
             chunk.setTokenEstimate(TokenEstimateUtils.estimate(chunks.get(i)));
             chunk.setParagraphIndex(paragraphCounter);
             chunk.setEmbeddingLiteral(toVectorLiteral(embeddings.get(i)));

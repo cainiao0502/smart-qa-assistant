@@ -43,6 +43,11 @@ CREATE TABLE IF NOT EXISTS document_chunk (
     doc_id BIGINT NOT NULL REFERENCES document(id),
     chunk_index INT NOT NULL,
     chunk_text TEXT NOT NULL,
+    -- 关键词检索的分词契约：入库与查询两侧共用 KeywordTokenizer（英文整词 + 中文 2-gram）。
+    -- tsv 生成列基于它建 GIN 索引；两侧分词实现一旦不一致，索引静默失配、关键词通道归零
+    chunk_tokens TEXT,
+    -- simple 分词器按空格切词，恰好适合已分好词的 chunk_tokens（对中文原文无效，勿改回 chunk_text）
+    tsv tsvector GENERATED ALWAYS AS (to_tsvector('simple', coalesce(chunk_tokens, ''))) STORED,
     token_estimate INT NOT NULL DEFAULT 0,
     paragraph_index INT DEFAULT 0,
     -- 维度必须与 ai.embedding 所选模型的输出维度一致，换模型时需同步修改此处并重建索引：
@@ -65,6 +70,7 @@ END $$;
 
 CREATE INDEX IF NOT EXISTS idx_document_chunk_doc_id ON document_chunk(doc_id);
 CREATE INDEX IF NOT EXISTS idx_document_chunk_kb_id ON document_chunk(kb_id);
+CREATE INDEX IF NOT EXISTS idx_document_chunk_tsv ON document_chunk USING gin (tsv);
 
 -- Use HNSW index for efficient approximate nearest neighbor search.
 -- HNSW handles kb_id + embedding combined queries better than IVFFlat.
@@ -118,6 +124,7 @@ CREATE TABLE IF NOT EXISTS agent_run (
     user_goal TEXT NOT NULL,
     status VARCHAR(32) NOT NULL,
     final_answer TEXT,
+    owner_user_id BIGINT,
     created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
     updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
@@ -125,6 +132,7 @@ CREATE TABLE IF NOT EXISTS agent_run (
 CREATE INDEX IF NOT EXISTS idx_agent_run_session_id ON agent_run(session_id);
 CREATE INDEX IF NOT EXISTS idx_agent_run_kb_id ON agent_run(kb_id);
 CREATE INDEX IF NOT EXISTS idx_agent_run_status ON agent_run(status);
+CREATE INDEX IF NOT EXISTS idx_agent_run_owner ON agent_run(owner_user_id);
 
 CREATE TABLE IF NOT EXISTS agent_step (
     id BIGSERIAL PRIMARY KEY,

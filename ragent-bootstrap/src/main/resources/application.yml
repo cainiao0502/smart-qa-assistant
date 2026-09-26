@@ -99,6 +99,11 @@ app:
     # （5173 被占用时 vite 自动改用 5174 等），故用通配避免浏览器被判 403。
     # 部署后请通过 APP_CORS_ALLOWED_ORIGINS 替换为真实域名。
     allowed-origins: "${APP_CORS_ALLOWED_ORIGINS:http://localhost:*,http://127.0.0.1:*}"
+  chat:
+    chunk-optimizer:
+      # 大 chunk 拆片限速（打字机演示效果，每片 10ms）：默认关闭，LLM 流式直发；
+      # 打字机动画应由前端实现。小 chunk 合并窗口（减少 SSE 事件数）不受影响
+      split-enabled: ${APP_CHAT_CHUNK_SPLIT_ENABLED:false}
   agent:
     # 6 步对「单问句」够用（实测 2 次 LLM 调用即可收尾），但三问句会在收尾前用尽；
     # 提到 8 让多子问题有机会答全（成本影响：每步约 +1 次 LLM 调用，其中固定前缀大多命中 prompt 缓存）
@@ -138,8 +143,20 @@ app:
     history-token-budget: 6000
     chunk-size: 500
     chunk-overlap: 80
+    # small-to-big：检索命中后取相邻切片拼入上下文（Dify parent-child 模式解决的问题：
+    # 小切片匹配准但缺上下文）。window 为命中片两侧各取的邻居数，0 等于关闭
+    context-expansion:
+      enabled: true
+      window: 1
+    # 旧数据回填：为 chunk_tokens 为 NULL 的历史切片补分词（tsv 索引切换的一次性迁移），
+    # 关闭后历史切片在关键词通道不可见
+    chunk-token-backfill:
+      enabled: true
     query-rewrite:
       enabled: true
+      # 改写结果 LRU 容量（按原问题缓存改写结果，重复问题/agent 二次检索不再重复调用）；
+      # 0 为关闭。评估路径不受此配置影响（评估器内部强制关闭缓存）
+      cache-size: 256
     channel:
       keyword:
         enabled: true   # 关置 false 即纯向量检索（消融实验用）

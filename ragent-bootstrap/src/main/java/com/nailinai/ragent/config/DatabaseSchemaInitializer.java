@@ -15,6 +15,34 @@ public class DatabaseSchemaInitializer {
     @Bean
     public ApplicationRunner ensureChatPersistenceSchema(JdbcTemplate jdbcTemplate) {
         return args -> {
+            // 旧库升级：document_chunk 没有 chunk_tokens 列时，补列并把旧的 tsv 生成列
+            // （基于 chunk_text，simple 分词器对中文无效）重建为基于 chunk_tokens 的版本
+            Integer chunkTokensExists = jdbcTemplate.queryForObject("""
+                    SELECT COUNT(*) FROM information_schema.columns
+                    WHERE table_name = 'document_chunk' AND column_name = 'chunk_tokens'
+                    """, Integer.class);
+            if (chunkTokensExists == null || chunkTokensExists == 0) {
+                jdbcTemplate.execute("ALTER TABLE document_chunk ADD COLUMN chunk_tokens TEXT");
+                jdbcTemplate.execute("ALTER TABLE document_chunk DROP COLUMN IF EXISTS tsv");
+                jdbcTemplate.execute("""
+                        ALTER TABLE document_chunk ADD COLUMN tsv tsvector
+                            GENERATED ALWAYS AS (to_tsvector('simple', coalesce(chunk_tokens, ''))) STORED
+                        """);
+                log.info("document_chunk.chunk_tokens added; tsv generated column rebuilt on chunk_tokens");
+            }
+            jdbcTemplate.execute("""
+                    DO $$
+                    BEGIN
+                        IF NOT EXISTS (
+                            SELECT 1
+                            FROM pg_indexes
+                            WHERE indexname = 'idx_document_chunk_tsv'
+                        ) THEN
+                            CREATE INDEX idx_document_chunk_tsv
+                                ON document_chunk USING gin (tsv);
+                        END IF;
+                    END $$;
+                    """);
             jdbcTemplate.execute("""
                     DO $$
                     BEGIN
@@ -45,7 +73,7 @@ public class DatabaseSchemaInitializer {
             jdbcTemplate.execute("""
                     DO $$
                     BEGIN
-                        IF EXISTS (
+                        IF NOT EXISTS (
                             SELECT 1
                             FROM information_schema.columns
                             WHERE table_name = 'agent_run'
@@ -53,36 +81,6 @@ public class DatabaseSchemaInitializer {
                               AND is_nullable = 'NO'
                         ) THEN
                             ALTER TABLE agent_run ALTER COLUMN kb_id DROP NOT NULL;
-                        END IF;
-                    END $$;
-                    """);
-            jdbcTemplate.execute("""
-                    DO $$
-                    BEGIN
-                        IF NOT EXISTS (
-                            SELECT 1
-                            FROM information_schema.columns
-                            WHERE table_name = 'document_chunk'
-                              AND column_name = 'tsv'
-                        ) THEN
-                            ALTER TABLE document_chunk
-                                ADD COLUMN tsv tsvector
-                                GENERATED ALWAYS AS (
-                                    to_tsvector('simple', coalesce(chunk_text, ''))
-                                ) STORED;
-                        END IF;
-                    END $$;
-                    """);
-            jdbcTemplate.execute("""
-                    DO $$
-                    BEGIN
-                        IF NOT EXISTS (
-                            SELECT 1
-                            FROM pg_indexes
-                            WHERE indexname = 'idx_document_chunk_tsv'
-                        ) THEN
-                            CREATE INDEX idx_document_chunk_tsv
-                                ON document_chunk USING gin (tsv);
                         END IF;
                     END $$;
                     """);
@@ -122,6 +120,32 @@ public class DatabaseSchemaInitializer {
                         ) THEN
                             CREATE INDEX idx_chat_message_owner
                                 ON chat_message (owner_user_id);
+                        END IF;
+                    END $$;
+                    """);
+            jdbcTemplate.execute("""
+                    DO $$
+                    BEGIN
+                        IF NOT EXISTS (
+                            SELECT 1
+                            FROM information_schema.columns
+                            WHERE table_name = 'agent_run'
+                              AND column_name = 'owner_user_id'
+                        ) THEN
+                            ALTER TABLE agent_run ADD COLUMN owner_user_id BIGINT;
+                        END IF;
+                    END $$;
+                    """);
+            jdbcTemplate.execute("""
+                    DO $$
+                    BEGIN
+                        IF NOT EXISTS (
+                            SELECT 1
+                            FROM pg_indexes
+                            WHERE indexname = 'idx_agent_run_owner'
+                        ) THEN
+                            CREATE INDEX idx_agent_run_owner
+                                ON agent_run (owner_user_id);
                         END IF;
                     END $$;
                     """);

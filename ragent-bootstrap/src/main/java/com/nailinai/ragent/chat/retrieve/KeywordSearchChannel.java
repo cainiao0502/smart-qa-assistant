@@ -11,8 +11,6 @@ import org.springframework.util.StringUtils;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Locale;
-import java.util.regex.Matcher;
-import java.util.regex.Pattern;
 
 @Component
 public class KeywordSearchChannel implements SearchChannel {
@@ -36,54 +34,27 @@ public class KeywordSearchChannel implements SearchChannel {
         return CHANNEL_NAME;
     }
 
-    private static final Pattern TOKEN_PATTERN = Pattern.compile("[a-zA-Z0-9_.]+|[\\u4e00-\\u9fff]+");
-    private static final int MAX_TOKENS = 24;
-
-    /**
-     * 查询分词：英文/数字词整词保留，中文片段切 2-gram。
-     *
-     * <p>历史教训：原实现直接把整句丢给 plainto_tsquery('simple', ...)，而 PG 的
-     * simple 分词器按空格切分，中文整段会成为单个超长 token（无法命中任何 chunk），
-     * 导致关键词通道对中文内容完全失效。应用层分词后按 ILIKE + 命中数打分，
-     * 不依赖 PG 中文分词扩展。
-     */
-    private List<String> tokenize(String query) {
-        if (!StringUtils.hasText(query)) {
-            return List.of();
-        }
-        List<String> tokens = new ArrayList<>();
-        Matcher matcher = TOKEN_PATTERN.matcher(query);
-        while (matcher.find() && tokens.size() < MAX_TOKENS) {
-            String part = matcher.group().toLowerCase(Locale.ROOT);
-            boolean isChinese = part.codePoints().allMatch(cp -> cp >= 0x4E00 && cp <= 0x9FFF);
-            if (isChinese && part.length() > 1) {
-                for (int i = 0; i + 2 <= part.length() && tokens.size() < MAX_TOKENS; i++) {
-                    tokens.add(part.substring(i, i + 2));
-                }
-            } else {
-                tokens.add(part);
-            }
-        }
-        return tokens.stream().distinct().limit(MAX_TOKENS).toList();
-    }
-
     @Override
     public List<SearchResult> search(SearchRequest request) {
         if (!enabled || request.kbId() == null || !StringUtils.hasText(request.effectiveQuery())) {
             return List.of();
         }
 
-        List<String> tokens = tokenize(request.effectiveQuery());
-        if (tokens.isEmpty()) {
+        // 分词与入库侧（chunk_tokens）共用 KeywordTokenizer：两侧契约，失配即静默零召回
+        String tsQuery = KeywordTokenizer.toTsQueryOr(request.effectiveQuery());
+        if (tsQuery == null) {
             return List.of();
         }
 
         int candidateLimit = Math.max(request.topK(), request.topK() * candidateMultiplier);
 
         try {
+            // 走 GIN 索引（tsv @@ tsquery）+ ts_rank 评分，替代旧的 24 × ILIKE 全表扫描。
+            // 旧实现对 chunk_tokens 为 NULL 的历史行无法命中——启动回填（ChunkTokenBackfillRunner）
+            // 负责在服务前补齐。
             List<DocumentChunk> chunks = documentChunkMapper.selectTopKByKeyword(
                     request.kbId(),
-                    tokens,
+                    tsQuery,
                     request.documentIds(),
                     normalizeFileTypes(request.fileTypes()),
                     normalizeKeyword(request.documentNameKeyword()),

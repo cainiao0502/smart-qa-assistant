@@ -12,10 +12,15 @@ import java.util.function.Consumer;
 
 /**
  * ChunkOptimizer optimizes the granularity of SSE chunks sent to the frontend.
- * - Large chunks (>50 chars) are split into ≤20 char sub-chunks with 10ms intervals
  * - Small chunks (≤5 chars) are merged within a 30ms window before sending
  * - Ensures no multi-byte UTF-8 character truncation (CJK, emoji)
  * - flush() immediately sends all buffered content on stream end
+ *
+ * <p><b>大 chunk 拆片限速（>50 字符拆成 ≤20 字符子片、每片 sleep 10ms）仅用于
+ * 前端打字机演示效果，且与「流式降低感知延迟」的目标相悖：一个 5000 字符的回答
+ * 会被人为加约 2.5s 延迟。该路径默认关闭（{@code splitLargeChunks=false}）；
+ * 打字机动画应由前端对已收到的文本自行渲染。</b>合并窗口（减少 SSE 事件数）保留，
+ * 始终生效。</p>
  *
  * <p>历史缺陷：accept() 是 synchronized，而大 chunk 的拆分发射在锁内逐片 sleep(10ms)，
  * 一个 5 万字符的输出会持锁约 25 秒，同实例的 flush()/后续 accept() 全部被卡住。
@@ -37,10 +42,17 @@ public class ChunkOptimizer {
     private final StringBuilder mergeBuffer = new StringBuilder();
     private ScheduledFuture<?> mergeTask;
     private volatile boolean flushed = false;
+    /** 大 chunk 拆片限速开关：默认关闭（见类注释）；仅供演示场景显式开启 */
+    private final boolean splitLargeChunks;
 
     public ChunkOptimizer(Consumer<String> emitCallback, ScheduledExecutorService scheduler) {
+        this(emitCallback, scheduler, false);
+    }
+
+    public ChunkOptimizer(Consumer<String> emitCallback, ScheduledExecutorService scheduler, boolean splitLargeChunks) {
         this.emitCallback = emitCallback;
         this.scheduler = scheduler;
+        this.splitLargeChunks = splitLargeChunks;
     }
 
     /**
@@ -55,19 +67,19 @@ public class ChunkOptimizer {
         synchronized (this) {
             int length = chunk.length();
 
-            if (length > LARGE_CHUNK_THRESHOLD) {
-                // Flush any pending merge buffer first
-                flushMergeBuffer();
-                // 纯计算：只切分，不在锁内发射或 sleep
-                splitIntoParts(chunk, parts);
-            } else if (length <= SMALL_CHUNK_THRESHOLD) {
+            if (length <= SMALL_CHUNK_THRESHOLD) {
                 // Small chunk: add to merge buffer and schedule delayed emit
                 mergeBuffer.append(chunk);
                 scheduleMergeFlush();
                 return;
+            }
+            // Medium/large chunk: flush any pending merge buffer first
+            flushMergeBuffer();
+            if (length > LARGE_CHUNK_THRESHOLD && splitLargeChunks) {
+                // 纯计算：只切分，不在锁内发射或 sleep
+                splitIntoParts(chunk, parts);
             } else {
-                // Medium chunk (6-50 chars): flush merge buffer then emit directly
-                flushMergeBuffer();
+                // 拆片限速关闭时大 chunk 也直发，不人为加打字机延迟
                 parts.add(chunk);
             }
         }

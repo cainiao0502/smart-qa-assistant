@@ -14,10 +14,10 @@ public interface DocumentChunkMapper {
 
     @Insert("""
             <script>
-            INSERT INTO document_chunk (kb_id, doc_id, chunk_index, chunk_text, token_estimate, paragraph_index, embedding)
+            INSERT INTO document_chunk (kb_id, doc_id, chunk_index, chunk_text, chunk_tokens, token_estimate, paragraph_index, embedding)
             VALUES
             <foreach collection="chunks" item="chunk" separator=",">
-                (#{chunk.kbId}, #{chunk.docId}, #{chunk.chunkIndex}, #{chunk.chunkText},
+                (#{chunk.kbId}, #{chunk.docId}, #{chunk.chunkIndex}, #{chunk.chunkText}, #{chunk.chunkTokens},
                  #{chunk.tokenEstimate}, #{chunk.paragraphIndex}, CAST(#{chunk.embeddingLiteral} AS vector))
             </foreach>
             </script>
@@ -36,6 +36,22 @@ public interface DocumentChunkMapper {
             ORDER BY chunk_index ASC
             """)
     List<DocumentChunk> selectByDocId(@Param("docId") Long docId);
+
+    @Select("""
+            <script>
+            SELECT id, kb_id AS kbId, doc_id AS docId, chunk_index AS chunkIndex,
+                   chunk_text AS chunkText, token_estimate AS tokenEstimate,
+                   paragraph_index AS paragraphIndex, created_at AS createdAt
+            FROM document_chunk
+            WHERE kb_id = #{kbId}
+              AND doc_id = #{docId}
+              AND chunk_index IN
+              <foreach collection="chunkIndexes" item="index" open="(" separator="," close=")">#{index}</foreach>
+            </script>
+            """)
+    List<DocumentChunk> selectByDocIdAndChunkIndexes(@Param("kbId") Long kbId,
+                                                     @Param("docId") Long docId,
+                                                     @Param("chunkIndexes") List<Integer> chunkIndexes);
 
     @Select("""
             <script>
@@ -100,27 +116,17 @@ public interface DocumentChunkMapper {
                 dc.chunk_text AS chunkText,
                 dc.token_estimate AS tokenEstimate,
                 dc.paragraph_index AS paragraphIndex,
-                0
-                <foreach collection="tokens" item="token">
-                    + (CASE WHEN dc.chunk_text ILIKE CONCAT('%', #{token}, '%') THEN 1 ELSE 0 END)
-                </foreach>
-                AS score,
+                ts_rank(dc.tsv, to_tsquery('simple', #{tsQuery})) AS score,
                 dc.created_at AS createdAt
             FROM document_chunk dc
             INNER JOIN document d ON d.id = dc.doc_id
             WHERE dc.kb_id = #{kbId}
+              AND dc.tsv @@ to_tsquery('simple', #{tsQuery})
             <if test="ownerUserId != null">
                 AND EXISTS (
                     SELECT 1 FROM knowledge_base kb
                     WHERE kb.id = dc.kb_id AND kb.owner_user_id = #{ownerUserId}
                 )
-            </if>
-            <if test="tokens != null and tokens.size() &gt; 0">
-              AND (
-                <foreach collection="tokens" item="token" separator=" OR ">
-                  dc.chunk_text ILIKE CONCAT('%', #{token}, '%')
-                </foreach>
-              )
             </if>
             <if test="documentIds != null and documentIds.size() &gt; 0">
                 AND dc.doc_id IN
@@ -142,7 +148,7 @@ public interface DocumentChunkMapper {
             </script>
             """)
     List<DocumentChunk> selectTopKByKeyword(@Param("kbId") Long kbId,
-                                            @Param("tokens") List<String> tokens,
+                                            @Param("tsQuery") String tsQuery,
                                             @Param("documentIds") List<Long> documentIds,
                                             @Param("fileTypes") List<String> fileTypes,
                                             @Param("documentNameKeyword") String documentNameKeyword,

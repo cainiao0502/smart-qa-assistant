@@ -33,8 +33,11 @@ public class RerankPostProcessor implements SearchPostProcessor {
     private final double lexicalWeight;
     private final boolean crossEncoderEnabled;
 
-    /** RRF 排名分量权重 = 1 - semanticWeight - lexicalWeight，恒 >= 0 */
-    /** RRF 排名分量权重 = 1 - semanticWeight - lexicalWeight，恒 >= 0 */
+    /**
+     * RRF 排名分量权重 = 1 - semanticWeight - lexicalWeight，恒 >= 0。
+     * 注意默认配置（0.75 + 0.25）下该权重为 0，RRF 分量不参与打分；
+     * 想启用 RRF 需把 semantic-weight + lexical-weight 配置到小于 1。
+     */
     private final double rrfWeight;
     /** 可选的 cross-encoder 客户端：未启用/未配置时为 null，走启发式重排 */
     private RerankClient rerankClient;
