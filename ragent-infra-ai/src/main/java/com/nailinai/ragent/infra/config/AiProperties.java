@@ -3,7 +3,9 @@ package com.nailinai.ragent.infra.config;
 import org.springframework.boot.context.properties.ConfigurationProperties;
 
 import java.util.ArrayList;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
 
 @ConfigurationProperties(prefix = "ai")
 public class AiProperties {
@@ -65,6 +67,11 @@ public class AiProperties {
 
     public static class ChatCandidates {
         private List<Candidate> candidates = new ArrayList<>();
+        /**
+         * 按角色配置的候选组（role → candidates）：查询改写/摘要/意图分类走 utility，
+         * 评估 judge 走 judge。角色未配置时回落主 candidates。
+         */
+        private Map<String, List<Candidate>> roles = new LinkedHashMap<>();
 
         public List<Candidate> getCandidates() {
             return candidates;
@@ -72,6 +79,14 @@ public class AiProperties {
 
         public void setCandidates(List<Candidate> candidates) {
             this.candidates = candidates;
+        }
+
+        public Map<String, List<Candidate>> getRoles() {
+            return roles;
+        }
+
+        public void setRoles(Map<String, List<Candidate>> roles) {
+            this.roles = roles;
         }
     }
 

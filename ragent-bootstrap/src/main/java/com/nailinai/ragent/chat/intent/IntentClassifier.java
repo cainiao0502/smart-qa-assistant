@@ -4,10 +4,12 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.nailinai.ragent.dto.request.ChatRequest;
 import com.nailinai.ragent.infra.chat.ChatClient;
+import com.nailinai.ragent.infra.router.RoleChatClients;
 import com.nailinai.ragent.mcp.McpToolCatalog;
 import com.nailinai.ragent.mcp.McpToolDefinition;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Component;
 import org.springframework.util.StringUtils;
 
@@ -21,6 +23,8 @@ public class IntentClassifier {
     private final ChatClient chatClient;
     private final ObjectMapper objectMapper;
     private final McpToolCatalog mcpToolCatalog;
+    /** 意图分类是小模型任务：配置了 ai.chat.roles.utility 时不再烧主模型。setter 注入保持构造器签名不变 */
+    private RoleChatClients roleChatClients;
 
     public IntentClassifier(ChatClient chatClient,
                             ObjectMapper objectMapper,
@@ -28,6 +32,17 @@ public class IntentClassifier {
         this.chatClient = chatClient;
         this.objectMapper = objectMapper;
         this.mcpToolCatalog = mcpToolCatalog;
+    }
+
+    @Autowired(required = false)
+    public void setRoleChatClients(RoleChatClients roleChatClients) {
+        this.roleChatClients = roleChatClients;
+    }
+
+    private ChatClient classifyClient() {
+        return roleChatClients != null
+                ? roleChatClients.forRole(RoleChatClients.ROLE_UTILITY)
+                : chatClient;
     }
 
     public IntentDecision classify(ChatRequest request) {
@@ -50,7 +65,7 @@ public class IntentClassifier {
 
         try {
             String prompt = buildClassificationPrompt(request);
-            String response = chatClient.chat(prompt);
+            String response = classifyClient().chat(prompt);
             return parseResponse(response, request);
         } catch (RuntimeException ex) {
             log.warn("intent classification failed, fallback to KB: {}", ex.getMessage());

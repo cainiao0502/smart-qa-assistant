@@ -3,8 +3,10 @@ package com.nailinai.ragent.eval;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.nailinai.ragent.infra.chat.ChatClient;
+import com.nailinai.ragent.infra.router.RoleChatClients;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Component;
 import org.springframework.util.StringUtils;
 
@@ -29,10 +31,23 @@ public class RagSemanticEvaluator {
 
     private final ChatClient chatClient;
     private final ObjectMapper objectMapper;
+    /** 语义评估（回答生成 + judge 打分）走 judge 角色的模型（未配置时回落主模型） */
+    private RoleChatClients roleChatClients;
 
     public RagSemanticEvaluator(ChatClient chatClient, ObjectMapper objectMapper) {
         this.chatClient = chatClient;
         this.objectMapper = objectMapper;
+    }
+
+    @Autowired(required = false)
+    public void setRoleChatClients(RoleChatClients roleChatClients) {
+        this.roleChatClients = roleChatClients;
+    }
+
+    private ChatClient judgeClient() {
+        return roleChatClients != null
+                ? roleChatClients.forRole(RoleChatClients.ROLE_JUDGE)
+                : chatClient;
     }
 
     /**
@@ -65,7 +80,7 @@ public class RagSemanticEvaluator {
                     Question:
                     %s
                     """.formatted(renderContext(chunkTexts), question);
-            return chatClient.chat(prompt);
+            return judgeClient().chat(prompt);
         } catch (RuntimeException ex) {
             log.warn("semantic evaluation: answer generation failed: {}", ex.getMessage());
             return null;
@@ -92,7 +107,7 @@ public class RagSemanticEvaluator {
                     Answer:
                     %s
                     """.formatted(renderContext(chunkTexts), question, answer);
-            return parse(chatClient.chat(prompt));
+            return parse(judgeClient().chat(prompt));
         } catch (RuntimeException ex) {
             log.warn("semantic evaluation: judge call failed: {}", ex.getMessage());
             return SemanticMetrics.empty();

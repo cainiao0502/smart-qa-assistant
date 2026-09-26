@@ -11,6 +11,7 @@ import com.nailinai.ragent.infra.rerank.SiliconFlowRerankClient;
 import com.nailinai.ragent.infra.embedding.OpenAICompatibleEmbeddingClient;
 import com.nailinai.ragent.infra.router.ModelHealthStore;
 import com.nailinai.ragent.infra.router.ModelRouter;
+import com.nailinai.ragent.infra.router.RoleChatClients;
 import com.nailinai.ragent.infra.vision.OpenAICompatibleVisionClient;
 import com.nailinai.ragent.infra.vision.VisionClient;
 import org.slf4j.Logger;
@@ -21,7 +22,9 @@ import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 
 import java.util.ArrayList;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
 
 @Configuration
 @EnableConfigurationProperties(AiProperties.class)
@@ -60,6 +63,52 @@ public class InfraAiAutoConfiguration {
             throw new IllegalStateException("No valid chat candidate configured under ai.chat.candidates");
         }
         return new ModelRouter(candidates, List.of(), modelHealthStore());
+    }
+
+    /**
+     * 按角色分发的聊天客户端（可选能力）。
+     *
+     * <p>为 ai.chat.roles.* 下配置的每个角色构建独立的多候选路由；
+     * 角色未配置或候选全部无效时回落主 chatClient，不阻塞启动。
+     * 未配置任何角色时本 bean 照常创建（等价于 primaryOnly），调用方无需判空。</p>
+     */
+    @Bean
+    @ConditionalOnMissingBean
+    public RoleChatClients roleChatClients(AiProperties properties,
+                                           ObjectMapper objectMapper,
+                                           ChatClient chatClient) {
+        Map<String, ChatClient> roleClients = new LinkedHashMap<>();
+        for (Map.Entry<String, List<AiProperties.Candidate>> entry
+                : properties.getChat().getRoles().entrySet()) {
+            String role = entry.getKey() == null ? "" : entry.getKey().trim();
+            if (role.isEmpty()) {
+                continue;
+            }
+            List<ChatClient> candidates = new ArrayList<>();
+            for (AiProperties.Candidate candidate : entry.getValue()) {
+                if (isBlank(candidate.getBaseUrl()) || isBlank(candidate.getApiKey())) {
+                    log.warn("Skip role '{}' chat candidate {} due to missing base-url or api-key",
+                            role, candidate.getProvider());
+                    continue;
+                }
+                candidates.add(new OpenAICompatibleChatClient(
+                        candidate.getProvider(),
+                        candidate.getBaseUrl(),
+                        candidate.getApiKey(),
+                        candidate.getModel(),
+                        properties.getRetry().getMaxAttempts(),
+                        properties.getRetry().getBackoffMs(),
+                        properties.getTimeout().getStreamTimeoutMs(),
+                        objectMapper
+                ));
+                log.info("Registered role '{}' chat candidate: provider={}, model={}",
+                        role, candidate.getProvider(), candidate.getModel());
+            }
+            if (!candidates.isEmpty()) {
+                roleClients.put(role, new ModelRouter(candidates, List.of(), modelHealthStore()));
+            }
+        }
+        return new RoleChatClients(chatClient, roleClients);
     }
 
     @Bean

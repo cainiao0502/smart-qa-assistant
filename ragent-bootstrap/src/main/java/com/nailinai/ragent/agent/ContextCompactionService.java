@@ -4,8 +4,10 @@ import com.nailinai.ragent.agent.dto.AgentStep;
 import com.nailinai.ragent.infra.chat.ChatClient;
 import com.nailinai.ragent.infra.chat.ChatResponse;
 import com.nailinai.ragent.infra.chat.LlmRequest;
+import com.nailinai.ragent.infra.router.RoleChatClients;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.stereotype.Service;
@@ -71,6 +73,8 @@ public class ContextCompactionService implements AgentTurnHook {
     private final int triggerChars;
     private final int keepRecentSteps;
     private final int summaryMaxTokens;
+    /** 压缩摘要走 utility 角色的模型（未配置时回落主模型）。setter 注入保持构造器签名不变 */
+    private RoleChatClients roleChatClients;
 
     public ContextCompactionService(ChatClient chatClient,
                                     @Value("${app.agent.compaction.trigger-chars:6000}") int triggerChars,
@@ -80,6 +84,17 @@ public class ContextCompactionService implements AgentTurnHook {
         this.triggerChars = Math.max(500, triggerChars);
         this.keepRecentSteps = Math.max(1, keepRecentSteps);
         this.summaryMaxTokens = Math.max(256, summaryMaxTokens);
+    }
+
+    @Autowired(required = false)
+    public void setRoleChatClients(RoleChatClients roleChatClients) {
+        this.roleChatClients = roleChatClients;
+    }
+
+    private ChatClient summarizerClient() {
+        return roleChatClients != null
+                ? roleChatClients.forRole(RoleChatClients.ROLE_UTILITY)
+                : chatClient;
     }
 
     /**
@@ -199,7 +214,7 @@ public class ContextCompactionService implements AgentTurnHook {
                 0.2,
                 summaryMaxTokens
         );
-        ChatResponse response = chatClient.chat(request);
+        ChatResponse response = summarizerClient().chat(request);
         // 记录本次摘要调用的真实用量：即使内容为空（随后抛异常降级），token 也已经消耗
         if (response != null && response.usage() != null && !response.usage().isEmpty()) {
             var usage = response.usage();
