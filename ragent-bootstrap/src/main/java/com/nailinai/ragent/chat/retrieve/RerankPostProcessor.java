@@ -103,8 +103,14 @@ public class RerankPostProcessor implements SearchPostProcessor {
 
         // cross-encoder 精排：配置开启且客户端可用时，用「query+候选文本」成对打分替代
         // 向量 cosine 启发式作为语义分量来源（对所有通道统一适用，不再只有向量通道有语义证据）。
-        // 调用失败/超时自动降级回启发式，绝不阻塞检索主链路。
         Map<Integer, Double> crossEncoderScores = tryCrossEncoderRerank(inputs, context);
+        if (crossEncoderEnabled && crossEncoderScores == null) {
+            // cross-encoder 启用但调用失败（供应商异常/超时）：保持上游（去重后）排序并截断
+            // top-k，不做启发式重排——2026-09-27 线上消融证明启发式重排 recall 为负收益
+            // （0.906 vs 无重排 0.969），失败时退回启发式等于主动降级检索质量
+            log.warn("cross-encoder rerank enabled but unavailable, falling back to un-reranked order");
+            return inputs.stream().limit(context.topK()).toList();
+        }
 
         List<SearchResult> inputsList = List.copyOf(inputs);
         for (int index = 0; index < inputsList.size(); index++) {

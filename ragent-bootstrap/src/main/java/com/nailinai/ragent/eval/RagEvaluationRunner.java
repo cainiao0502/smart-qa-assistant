@@ -37,6 +37,12 @@ public class RagEvaluationRunner implements ApplicationRunner {
     private final String evaluationSetPath;
     /** 生产路径的融合分阈值：由 reference-distance-threshold（距离）换算而来，用于第五列消融 */
     private final double productionScoreThreshold;
+    /**
+     * 跳过含查询改写的消融组合：rewrite=true 的组合每条查询都要调 chat 模型，
+     * 供应商余额耗尽（402）时重试+熔断会把评估拖到遥遥无期。开启后只跑
+     * noRewrite / minimal / threshold(no-rewrite) 三列——它们不依赖 chat 模型。
+     */
+    private final boolean skipRewrite;
 
     public RagEvaluationRunner(RagEvaluator ragEvaluator,
                                RagSemanticEvaluator semanticEvaluator,
@@ -44,7 +50,8 @@ public class RagEvaluationRunner implements ApplicationRunner {
                                @Value("${app.eval.enabled:false}") boolean enabled,
                                @Value("${app.eval.semantic-enabled:false}") boolean semanticEnabled,
                                @Value("${app.eval.set-path:data/eval/eval-set.json}") String evaluationSetPath,
-                               @Value("${app.rag.reference-distance-threshold:0.4}") double referenceDistanceThreshold) {
+                               @Value("${app.rag.reference-distance-threshold:0.4}") double referenceDistanceThreshold,
+                               @Value("${app.eval.skip-rewrite:false}") boolean skipRewrite) {
         this.ragEvaluator = ragEvaluator;
         this.semanticEvaluator = semanticEvaluator;
         this.objectMapper = objectMapper;
@@ -52,6 +59,7 @@ public class RagEvaluationRunner implements ApplicationRunner {
         this.semanticEnabled = semanticEnabled;
         this.evaluationSetPath = evaluationSetPath;
         this.productionScoreThreshold = Math.max(0.0, Math.min(1.0, 1 - referenceDistanceThreshold));
+        this.skipRewrite = skipRewrite;
     }
 
     @Override
@@ -72,6 +80,36 @@ public class RagEvaluationRunner implements ApplicationRunner {
 
         log.info("======== RAG evaluation started (kbId={}, queries={}, topK={}) ========",
                 set.kbId(), set.queries().size(), set.topK());
+
+        if (skipRewrite) {
+            // 不依赖 chat 模型的消融列：noRewrite(rerank on/off) + 生产阈值
+            EvaluationReport rerankOnly = ragEvaluator.evaluate(set, false, true);
+            EvaluationReport minimal = ragEvaluator.evaluate(set, false, false);
+            log.info("[ablation-skip-rewrite] rewrite=false rerank=true | {}", rerankOnly.compactSummary());
+            log.info("[ablation-skip-rewrite] rewrite=false rerank=false | {}", minimal.compactSummary());
+
+            EvaluationReport withThreshold =
+                    ragEvaluator.evaluate(set, false, true, productionScoreThreshold);
+            log.info("[ablation-threshold] productionScoreThreshold={} rewrite=false rerank=true | {}",
+                    productionScoreThreshold, withThreshold.compactSummary());
+
+            log.info("-- per-query detail (rerank on, no rewrite) --");
+            for (QueryEvaluation query : rerankOnly.queries()) {
+                log.info("[query] Q: {} | expected={} | retrieved={} | recall={} precision={}",
+                        query.query().question(),
+                        query.query().expectedDocuments(),
+                        query.retrievedDocuments(),
+                        String.format("%.3f", query.metrics().recallAtK()),
+                        String.format("%.3f", query.metrics().precisionAtK()));
+            }
+
+            if (semanticEnabled) {
+                runSemanticEvaluation(rerankOnly.queries());
+            }
+
+            log.info("======== RAG evaluation finished (skip-rewrite) ========");
+            return;
+        }
 
         EvaluationReport full = ragEvaluator.evaluate(set, true, true);
         EvaluationReport noRewrite = ragEvaluator.evaluate(set, false, true);

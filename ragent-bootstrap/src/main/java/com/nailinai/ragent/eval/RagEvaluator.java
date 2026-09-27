@@ -14,7 +14,9 @@ import com.nailinai.ragent.dto.request.ChatRequest;
 import com.nailinai.ragent.dto.response.RetrievalResult;
 import com.nailinai.ragent.entity.DocumentChunk;
 import com.nailinai.ragent.infra.chat.ChatClient;
+import com.nailinai.ragent.infra.rerank.RerankClient;
 import com.nailinai.ragent.infra.embedding.EmbeddingClient;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Component;
 
@@ -35,6 +37,8 @@ import java.util.UUID;
 @Component
 public class RagEvaluator {
 
+    private static final org.slf4j.Logger log = org.slf4j.LoggerFactory.getLogger(RagEvaluator.class);
+
     private final EmbeddingClient embeddingClient;
     private final ChatClient chatClient;
     private final MultiChannelRetriever defaultRetriever;
@@ -43,6 +47,17 @@ public class RagEvaluator {
     private final double rerankLexicalWeight;
     /** 每文档席位上限（0=关闭）：与生产路径共用配置，>0 时消融各组合都挂载多样性处理器 */
     private final int diversityMaxPerDoc;
+    /** cross-encoder 开关：与生产路径共用配置。曾因手动 new 用三参构造硬编码 false，
+     * 导致消融的 rerank 永远是启发式、cross-encoder 从未参与评估（真机 Run A 发现） */
+    private final boolean crossEncoderEnabled;
+    /** 可选的 cross-encoder 客户端：手动 new 的 RerankPostProcessor 不经 Spring 注入，
+     * 必须显式传递——漏传会让 cross-encoder 分支静默退回启发式（真机 Run A 发现） */
+    private RerankClient rerankClient;
+
+    @Autowired(required = false)
+    public void setRerankClient(RerankClient rerankClient) {
+        this.rerankClient = rerankClient;
+    }
 
     public RagEvaluator(EmbeddingClient embeddingClient,
                         ChatClient chatClient,
@@ -50,7 +65,8 @@ public class RagEvaluator {
                         List<SearchChannel> channels,
                         @Value("${app.rag.rerank.semantic-weight:0.75}") double rerankSemanticWeight,
                         @Value("${app.rag.rerank.lexical-weight:0.25}") double rerankLexicalWeight,
-                        @Value("${app.rag.diversity.max-per-doc:0}") int diversityMaxPerDoc) {
+                        @Value("${app.rag.diversity.max-per-doc:0}") int diversityMaxPerDoc,
+                        @Value("${app.rag.rerank.cross-encoder.enabled:false}") boolean crossEncoderEnabled) {
         this.embeddingClient = embeddingClient;
         this.chatClient = chatClient;
         this.defaultRetriever = defaultRetriever;
@@ -58,6 +74,7 @@ public class RagEvaluator {
         this.rerankSemanticWeight = rerankSemanticWeight;
         this.rerankLexicalWeight = rerankLexicalWeight;
         this.diversityMaxPerDoc = Math.max(0, diversityMaxPerDoc);
+        this.crossEncoderEnabled = crossEncoderEnabled;
     }
 
     /**
@@ -83,9 +100,16 @@ public class RagEvaluator {
         }
         RetrievalService service = buildRetrievalService(queryRewriteEnabled, rerankEnabled);
         double threshold = Math.max(0.0, Math.min(1.0, scoreThreshold));
-        List<QueryEvaluation> queryResults = set.queries().stream()
-                .map(query -> evaluateQuery(service, set, query, threshold))
-                .toList();
+        List<QueryEvaluation> queryResults = new ArrayList<>();
+        for (RagEvaluationQuery query : set.queries()) {
+            try {
+                queryResults.add(evaluateQuery(service, set, query, threshold));
+            } catch (RuntimeException ex) {
+                // 单条查询的基础设施故障（embedding 供应商偶发失败）只放弃该条，
+                // 不让整轮评估作废——真实供应商总会有抖动
+                log.warn("evaluation query failed, skipped: {} | {}", query.question(), ex.getMessage());
+            }
+        }
         return EvaluationReport.aggregate(queryRewriteEnabled, rerankEnabled, queryResults);
     }
 
@@ -107,7 +131,11 @@ public class RagEvaluator {
             processors.add(new DocDiversityPostProcessor(diversityMaxPerDoc));
         }
         if (rerank) {
-            processors.add(new RerankPostProcessor(true, rerankSemanticWeight, rerankLexicalWeight));
+            RerankPostProcessor rerankPostProcessor =
+                    new RerankPostProcessor(true, rerankSemanticWeight, rerankLexicalWeight, crossEncoderEnabled);
+            // 手动 new 的实例不经 Spring 注入：cross-encoder 客户端必须显式传递
+            rerankPostProcessor.setRerankClient(rerankClient);
+            processors.add(rerankPostProcessor);
         }
         MultiChannelRetriever retriever = new MultiChannelRetriever(channels, processors);
         // 评估测的是「检索命中了什么」，small-to-big 的相邻正文扩展属于服务期增强，

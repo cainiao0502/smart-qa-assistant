@@ -29,7 +29,15 @@ public class OpenAICompatibleEmbeddingClient implements EmbeddingClient {
                                            String apiKey,
                                            String embeddingModel,
                                            ObjectMapper objectMapper) {
-        this.restClient = RestClient.builder().baseUrl(baseUrl).build();
+        // 代理支持（HTTPS_PROXY/系统属性）：embedding 供应商可能是仅代理可达的海外站，
+        // 与 chat/rerank 客户端共用同一探测优先级（HttpProxySupport）
+        java.net.http.HttpClient.Builder httpClientBuilder = java.net.http.HttpClient.newBuilder()
+                .connectTimeout(java.time.Duration.ofSeconds(15));
+        com.nailinai.ragent.infra.http.HttpProxySupport.configureProxy(httpClientBuilder, baseUrl.startsWith("https"));
+        org.springframework.http.client.JdkClientHttpRequestFactory requestFactory =
+                new org.springframework.http.client.JdkClientHttpRequestFactory(httpClientBuilder.build());
+        requestFactory.setReadTimeout(java.time.Duration.ofSeconds(30));
+        this.restClient = RestClient.builder().baseUrl(baseUrl).requestFactory(requestFactory).build();
         this.objectMapper = objectMapper;
         this.providerName = providerName;
         this.embeddingModel = embeddingModel;

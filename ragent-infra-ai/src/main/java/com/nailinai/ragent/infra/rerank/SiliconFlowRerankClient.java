@@ -47,9 +47,11 @@ public class SiliconFlowRerankClient implements RerankClient {
         this.apiKey = apiKey;
         this.model = model;
         this.timeoutMs = Math.max(1000, timeoutMs);
-        HttpClient httpClient = HttpClient.newBuilder()
-                .connectTimeout(Duration.ofSeconds(10))
-                .build();
+        HttpClient.Builder httpClientBuilder = HttpClient.newBuilder()
+                .connectTimeout(Duration.ofSeconds(10));
+        // Jina/Cohere 等海外 rerank 服务需走代理（HTTPS_PROXY），与 chat 客户端同一探测优先级
+        com.nailinai.ragent.infra.http.HttpProxySupport.configureProxy(httpClientBuilder, true);
+        HttpClient httpClient = httpClientBuilder.build();
         JdkClientHttpRequestFactory requestFactory = new JdkClientHttpRequestFactory(httpClient);
         requestFactory.setReadTimeout(Duration.ofMillis(this.timeoutMs));
         this.restClient = RestClient.builder().baseUrl(this.baseUrl).requestFactory(requestFactory).build();
