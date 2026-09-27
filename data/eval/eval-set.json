@@ -1,142 +1,134 @@
 {
-  "kbId": 1,
+  "kbId": 2,
   "topK": 4,
   "queries": [
     {
-      "question": "公司报销流程分为哪几个步骤？",
-      "expectedDocuments": ["aaa.txt"]
+      "question": "生产环境应用节点的 JVM 堆内存参数是多少？",
+      "expectedDocuments": ["RAG检索测试语料.md"]
     },
     {
-      "question": "deepseek 最新发布的模型是什么？",
-      "expectedDocuments": ["task.txt"]
+      "question": "为什么生产环境堆内存不建议超过 2048m？",
+      "expectedDocuments": ["RAG检索测试语料.md"]
     },
     {
-      "question": "图灵测试是哪位科学家在什么时候提出的？",
-      "expectedDocuments": ["introduce.txt"]
+      "question": "生产环境 PostgreSQL 的 shared_buffers 调优参数是多少？",
+      "expectedDocuments": ["RAG检索测试语料.md"]
     },
     {
-      "question": "什么是检索增强生成 RAG？",
-      "expectedDocuments": ["aaa.txt"]
+      "question": "单个切片的字符数上限是多少？相邻切片之间重叠多少字符？",
+      "expectedDocuments": ["RAG检索测试语料.md"]
     },
     {
-      "question": "RAG 系统检索不到内容时该怎么处理？",
-      "expectedDocuments": ["aaa.txt"]
+      "question": "每个检索通道的召回条数是多少？重排后保留几条？",
+      "expectedDocuments": ["RAG检索测试语料.md"]
     },
     {
-      "question": "Mini Ragent 端到端验证流程包含哪些环节？",
-      "expectedDocuments": ["e2e.txt"]
+      "question": "向量相似度下限 scoreThreshold 的生产值是多少？",
+      "expectedDocuments": ["RAG检索测试语料.md"]
     },
     {
-      "question": "一个完整的 RAG 系统由哪些核心模块组成？",
-      "expectedDocuments": ["aaa.txt"]
+      "question": "hnsw.ef_search 的默认值和生产环境配置值分别是多少？",
+      "expectedDocuments": ["RAG检索测试语料.md"]
     },
     {
-      "question": "RAG 文档解析层需要完成哪些核心工作？",
-      "expectedDocuments": ["aaa.txt"]
+      "question": "ef_construction 和 ef_search 这两个参数有什么区别？",
+      "expectedDocuments": ["RAG检索测试语料.md"]
     },
     {
-      "question": "文档分块（chunking）的目标是什么？常见分块策略有哪些？",
-      "expectedDocuments": ["aaa.txt"]
+      "question": "把 ef_search 下调到 32 以下会发生什么？",
+      "expectedDocuments": ["RAG检索测试语料.md"]
     },
     {
-      "question": "为什么 embedding 模型的选型会显著影响检索效果？哪些场景受影响最大？",
-      "expectedDocuments": ["aaa.txt"]
+      "question": "文档从上传到可检索需要经过哪几个阶段？",
+      "expectedDocuments": ["RAG检索测试语料.md"]
     },
     {
-      "question": "RAG 检索层的常见检索方法有哪些？",
-      "expectedDocuments": ["aaa.txt"]
+      "question": "文档解析阶段使用什么工具？单文档解析的字符上限是多少？",
+      "expectedDocuments": ["RAG检索测试语料.md"]
     },
     {
-      "question": "很多 RAG 项目效果不好的常见失败原因有哪些？",
-      "expectedDocuments": ["aaa.txt"]
+      "question": "嵌入向量的维度是多少？",
+      "expectedDocuments": ["RAG检索测试语料.md"]
     },
     {
-      "question": "为什么向量检索之后还需要 rerank 重排模型？",
-      "expectedDocuments": ["aaa.txt"]
+      "question": "文档入库的某个阶段失败了会怎样？最多重试几次？",
+      "expectedDocuments": ["RAG检索测试语料.md"]
     },
     {
-      "question": "企业级 RAG 应该建立哪些评估指标？",
-      "expectedDocuments": ["aaa.txt"]
+      "question": "故障码 RAG_ANSWER_DEGRADED 的症状和可能根因是什么？",
+      "expectedDocuments": ["RAG检索测试语料.md"]
     },
     {
-      "question": "什么内容适合入库做知识库？哪些内容不适合直接入库？",
-      "expectedDocuments": ["aaa.txt"]
+      "question": "出现 RAG_ANSWER_DEGRADED 时应该怎么处置？",
+      "expectedDocuments": ["RAG检索测试语料.md"]
     },
     {
-      "question": "企业级 RAG 的关键设计原则有哪些？",
-      "expectedDocuments": ["aaa.txt"]
+      "question": "故障码 TOOL_LOOP_EXCEEDED 是什么意思？如何处置？",
+      "expectedDocuments": ["RAG检索测试语料.md"]
     },
     {
-      "question": "RAG 与传统搜索有什么区别？",
-      "expectedDocuments": ["aaa.txt"]
+      "question": "故障码 VECTOR_DIM_MISMATCH 的根因和处置方法是什么？",
+      "expectedDocuments": ["RAG检索测试语料.md"]
     },
     {
-      "question": "把一个普通知识库升级为高质量知识库分为哪几个阶段？",
-      "expectedDocuments": ["aaa.txt"]
+      "question": "出现 PG_CONN_EXHAUSTED 故障码时应该检查什么？",
+      "expectedDocuments": ["RAG检索测试语料.md"]
     },
     {
-      "question": "RAG 项目落地时最容易忽略哪些事情？",
-      "expectedDocuments": ["aaa.txt"]
+      "question": "生产环境 max_connections 和应用连接池上限分别是多少？",
+      "expectedDocuments": ["RAG检索测试语料.md"]
     },
     {
-      "question": "一个高质量的 RAG 回答应该满足哪些要求？",
-      "expectedDocuments": ["aaa.txt"]
+      "question": "10 页 PDF 单文档入库的耗时基线是多少？",
+      "expectedDocuments": ["RAG检索测试语料.md"]
     },
     {
-      "question": "RAG 系统为什么必须支持拒答？",
-      "expectedDocuments": ["aaa.txt"]
+      "question": "检索的 P95 延迟是多少？Agent 模式单轮对话的 P95 呢？",
+      "expectedDocuments": ["RAG检索测试语料.md"]
     },
     {
-      "question": "优质知识文档的写法有哪些建议？",
-      "expectedDocuments": ["aaa.txt"]
+      "question": "单节点建议的并发会话数是多少？",
+      "expectedDocuments": ["RAG检索测试语料.md"]
     },
     {
-      "question": "RAG 系统效果的上限由哪些因素共同决定？",
-      "expectedDocuments": ["aaa.txt"]
+      "question": "响应延迟劣化时应该按什么顺序排查？",
+      "expectedDocuments": ["RAG检索测试语料.md"]
     },
     {
-      "question": "达特茅斯会议是哪一年召开的？有什么历史意义？",
-      "expectedDocuments": ["introduce.txt"]
+      "question": "全量备份在什么时候执行？保留多少天？",
+      "expectedDocuments": ["RAG检索测试语料.md"]
     },
     {
-      "question": "第一次 AI 寒冬产生的原因有哪些？",
-      "expectedDocuments": ["introduce.txt"]
+      "question": "WAL 归档的间隔是多少？恢复演练的 RTO 和 RPO 目标分别是多少？",
+      "expectedDocuments": ["RAG检索测试语料.md"]
     },
     {
-      "question": "专家系统为什么在 1980 年代末走向衰落？",
-      "expectedDocuments": ["introduce.txt"]
+      "question": "运维手册 v3.2 版本的变更内容是什么？",
+      "expectedDocuments": ["RAG检索测试语料.md"]
     },
     {
-      "question": "深蓝计算机击败国际象棋世界冠军是哪一年？",
-      "expectedDocuments": ["introduce.txt"]
+      "question": "应用节点和数据库节点的主机规格分别是什么？",
+      "expectedDocuments": ["RAG检索测试语料.md"]
     },
     {
-      "question": "AlexNet 在 2012 年 ImageNet 竞赛中取得成功的关键创新是什么？",
-      "expectedDocuments": ["introduce.txt"]
+      "question": "Mini Ragent 使用了哪些核心技术栈？",
+      "expectedDocuments": ["probe-doc.txt"]
     },
     {
-      "question": "Transformer 架构的核心创新是什么？",
-      "expectedDocuments": ["introduce.txt"]
+      "question": "Mini Ragent 项目分为哪几个模块？各自负责什么？",
+      "expectedDocuments": ["probe-doc.txt"]
     },
     {
-      "question": "BERT 和 GPT 两条技术路线的区别是什么？",
-      "expectedDocuments": ["introduce.txt"]
+      "question": "向量检索的维度、嵌入模型和索引类型分别是什么？",
+      "expectedDocuments": ["probe-doc.txt"]
     },
     {
-      "question": "ChatGPT 通过什么技术让回答更有帮助、更安全？",
-      "expectedDocuments": ["introduce.txt"]
+      "question": "Agent 运行时实现了什么执行闭环？默认最大步数是多少？",
+      "expectedDocuments": ["probe-doc.txt"]
     },
     {
-      "question": "AI 对齐问题为什么被视为 AI 安全的核心挑战？",
-      "expectedDocuments": ["introduce.txt"]
-    },
-    {
-      "question": "RAG 技术主要用来解决大模型的哪两类问题？",
-      "expectedDocuments": ["introduce.txt"]
-    },
-    {
-      "question": "ChatGPT 最新的模型版本是什么？",
-      "expectedDocuments": ["task.txt"]
+      "question": "PostgreSQL 数据库部署在什么环境里？",
+      "expectedDocuments": ["probe-doc.txt"]
     }
   ]
 }
