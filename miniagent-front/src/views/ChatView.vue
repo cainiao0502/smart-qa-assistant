@@ -172,6 +172,14 @@
                   <span v-if="message.retrievalConfig.reranked" class="retrieval-summary-chip">
                     Rerank
                   </span>
+                  <span
+                    v-for="channel in message.retrievalConfig.degradedChannels || []"
+                    :key="channel"
+                    class="retrieval-summary-chip retrieval-summary-degraded"
+                    :title="'检索通道 ' + channel + ' 因异常退出本轮检索，结果来自其余通道，召回可能不完整'"
+                  >
+                    ⚠ {{ channel }} 降级
+                  </span>
                   <span class="retrieval-summary-text">
                     {{ message.retrievalConfig.effectiveQuery || message.retrievalConfig.originalQuery }}
                   </span>
@@ -2626,6 +2634,14 @@ onBeforeUnmount(() => {
   color: var(--primary-strong);
   font-size: var(--text-sm);
   font-weight: 700;
+}
+
+/* 检索通道降级警示：与常规 chip 区分，用警示橙告知「本轮召回可能不完整」 */
+.retrieval-summary-degraded {
+  background: rgba(214, 128, 23, 0.16);
+  color: #a05a08;
+  border: 1px solid rgba(214, 128, 23, 0.35);
+  cursor: help;
 }
 
 .retrieval-summary-text {

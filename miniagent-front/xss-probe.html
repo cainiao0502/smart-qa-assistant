@@ -1,0 +1,62 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <title>XSS 渲染探测</title>
+</head>
+<body>
+  <div id="full"></div>
+  <div id="stream"></div>
+  <div id="incremental"></div>
+  <script type="module">
+    import { useMarkdownRenderer } from '/src/composables/useMarkdownRenderer.js'
+    import { useIncrementalMarkdown } from '/src/composables/useIncrementalMarkdown.js'
+    import { useStreamingEngine } from '/src/composables/useStreamingEngine.js'
+
+    // 模型可能复述的恶意内容 + 正常 Markdown（代码块/表格/链接）
+    const PAYLOAD = [
+      '<img src=x onerror="window.__xssFired=(window.__xssFired||0)+1">',
+      '<script>window.__scriptFired=(window.__scriptFired||0)+1<\/script>',
+      '[点击领奖](javascript:alert(1))',
+      '<iframe src="data:text/html,<b>xss</b>"></iframe>',
+      '### 正常标题',
+      '',
+      '```java',
+      'public class Hello { /* 代码高亮应保留 */ }',
+      '```',
+      '',
+      '| 参数 | 值 |',
+      '| ---- | -- |',
+      '| topK | 4  |',
+      '',
+      '普通 **加粗** 与 [正常链接](https://example.com)。'
+    ].join('\n')
+
+    window.__xssFired = 0
+
+    const { initializeMarkdownRenderer, renderMarkdown, renderStreamMarkdown } = useMarkdownRenderer()
+    await initializeMarkdownRenderer()
+    document.getElementById('full').innerHTML = renderMarkdown(PAYLOAD)
+    document.getElementById('stream').innerHTML = renderStreamMarkdown(PAYLOAD)
+
+    const incremental = useIncrementalMarkdown()
+    await incremental.ensureInit()
+    incremental.append(PAYLOAD)
+    incremental.finalize()
+    document.getElementById('incremental').innerHTML = incremental.renderedHtml.value
+
+    // 打字机引擎：500 字符应渐进释放而非一次性出现
+    const engine = useStreamingEngine()
+    engine.start()
+    const longText = '字'.repeat(500)
+    engine.appendChunk(longText)
+    await new Promise(r => setTimeout(r, 120))
+    const midLength = engine.displayedContent.value.length
+    engine.flush()
+    const finalLength = engine.displayedContent.value.length
+    window.__typewriter = { midLength, finalLength }
+
+    window.__probeReady = true
+  </script>
+</body>
+</html>
