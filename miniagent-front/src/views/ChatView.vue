@@ -11,24 +11,6 @@
         </div>
 
         <div class="chat-header-actions">
-          <div class="mode-switch" v-if="!isKnowledgeBaseMode">
-            <button
-              type="button"
-              class="mode-chip"
-              :class="{ active: assistantMode === 'fast' }"
-              @click="assistantMode = 'fast'"
-            >
-              快速对话
-            </button>
-            <button
-              type="button"
-              class="mode-chip"
-              :class="{ active: assistantMode === 'agent' }"
-              @click="assistantMode = 'agent'"
-            >
-              Agent增强
-            </button>
-          </div>
 
           <el-select
             v-model="selectedKbId"
@@ -82,8 +64,6 @@
           </div>
 
           <h2>今天我能帮你完成什么？</h2>
-          <p>不选知识库时可在快速对话和 Agent 增强之间切换；选择知识库后会自动进入知识库问答。</p>
-
           <div class="quick-prompts">
             <button
               v-for="prompt in exampleQuestions"
@@ -501,7 +481,6 @@
         :question="question"
         @update:question="question = $event"
         :is-loading="isLoading"
-        :assistant-mode="assistantMode"
         :is-knowledge-base-mode="isKnowledgeBaseMode"
         :current-knowledge-base-name="currentKnowledgeBaseName"
         :selected-skill-names="selectedSkillNames"
@@ -558,7 +537,6 @@ const router = useRouter()
 const question = ref('')
 const isLoading = ref(false)
 const selectedKbId = ref(null)
-const assistantMode = ref('fast')
 const selectedSkillNames = ref([])
 const availableSkills = ref([])
 const knowledgeBases = ref([])
@@ -613,14 +591,11 @@ const currentKnowledgeBaseName = computed(() => {
   return knowledgeBases.value.find((item) => item.id === selectedKbId.value)?.name || '通用助手'
 })
 const isKnowledgeBaseMode = computed(() => selectedKbId.value !== null && selectedKbId.value !== undefined)
-const isAgentEnhancedMode = computed(() => isKnowledgeBaseMode.value || assistantMode.value === 'agent')
 const toolbarDescription = computed(() => {
   if (isKnowledgeBaseMode.value) {
     return '基于知识库检索结果生成回答'
   }
-  return assistantMode.value === 'agent'
-    ? '通用助手 · Agent 增强模式'
-    : '通用助手 · 快速对话模式'
+  return '通用助手 · 快速对话模式'
 })
 
 const executableSkillCount = computed(() => {
@@ -1085,7 +1060,7 @@ function buildChatPayload(content) {
     fileTypes,
     documentNameKeyword: hasKnowledgeBase ? (retrievalOptions.value.documentNameKeyword.trim() || null) : null,
     skillNames: selectedSkillNames.value.length ? selectedSkillNames.value : null,
-    agentEnabled: isAgentEnhancedMode.value
+    agentEnabled: false
   }
 }
 
@@ -1496,7 +1471,6 @@ async function resetConversation() {
   question.value = ''
   sessionId.value = ''
   selectedKbId.value = null
-  assistantMode.value = 'fast'
   await router.replace({ path: '/' })
 }
 
@@ -1714,40 +1688,9 @@ onBeforeUnmount(() => {
   gap: 8px;
 }
 
-.mode-switch {
-  display: inline-flex;
-  align-items: center;
-  gap: 4px;
-  padding: 3px;
-  border-radius: 999px;
-  background: var(--bg-surface-dark);
-  border: 1px solid var(--border-light);
-  box-shadow: inset 0 1px 2px rgba(0, 0, 0, 0.03);
-}
 
-.mode-chip {
-  border: 0;
-  background: transparent;
-  color: var(--text-secondary);
-  border-radius: 999px;
-  padding: 7px 14px;
-  font-size: var(--text-sm);
-  font-weight: var(--weight-medium);
-  white-space: nowrap;
-  cursor: pointer;
-  transition: all var(--duration-jelly, 400ms) var(--spring-soft, cubic-bezier(0.34, 1.56, 0.64, 1));
-}
 
-.mode-chip:hover {
-  color: var(--text-primary);
-}
 
-.mode-chip.active {
-  background: var(--bg-surface-strong);
-  color: var(--primary-strong);
-  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.06), 0 0 0 1px rgba(166, 61, 42, 0.16);
-  font-weight: 700;
-}
 
 .kb-select {
   width: 240px;

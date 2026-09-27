@@ -53,7 +53,6 @@ import { ref, computed } from 'vue'
 const props = defineProps({
   question: { type: String, default: '' },
   isLoading: Boolean,
-  assistantMode: { type: String, default: 'fast' },
   isKnowledgeBaseMode: Boolean,
   currentKnowledgeBaseName: { type: String, default: '通用助手' },
   selectedSkillNames: { type: Array, default: () => [] },
@@ -78,7 +77,7 @@ const handleSend = () => {
 
 const modeLabel = computed(() => {
   if (props.isKnowledgeBaseMode) return 'RAG'
-  return props.assistantMode === 'agent' ? 'Agent' : '对话'
+  return '对话'
 })
 </script>
 
