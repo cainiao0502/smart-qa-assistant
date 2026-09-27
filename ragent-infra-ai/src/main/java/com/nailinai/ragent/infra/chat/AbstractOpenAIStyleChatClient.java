@@ -397,8 +397,12 @@ public abstract class AbstractOpenAIStyleChatClient implements ChatClient {
                 if (StringUtils.hasText(streamDelta.reasoning())) {
                     callback.onReasoning(streamDelta.reasoning());
                 }
-                if (StringUtils.hasText(streamDelta.content())) {
-                    receivedContent = true;
+                if (streamDelta.content() != null && !streamDelta.content().isEmpty()) {
+                    // 换行等空白 delta 也必须转发（流式 Markdown 的换行全靠它们）；
+                    // receivedContent 仅在出现非空白正文时置位，纯空白流仍按空响应处理
+                    if (StringUtils.hasText(streamDelta.content())) {
+                        receivedContent = true;
+                    }
                     callback.onContent(streamDelta.content());
                 }
             }
@@ -466,11 +470,12 @@ public abstract class AbstractOpenAIStyleChatClient implements ChatClient {
 
             String reasoningDelta = computeDelta(reasoning, aggregatedReasoning);
             String contentDelta = null;
-            if (StringUtils.hasText(content)) {
-                String current = sanitizeContent(content);
-                if (StringUtils.hasText(current)) {
-                    contentDelta = computeDelta(current, aggregatedContent);
-                }
+            if (content != null && !content.isEmpty()) {
+                // 只剥 think 块、不 strip：流式分片边界常恰好切在换行符上，
+                // 若对 delta strip，纯换行的分片（"\n\n"）会变空被丢弃——
+                // 整篇回答的换行随之丢失，Markdown 退化为单行字墙（真机复现）
+                String current = stripThinkBlocks(content);
+                contentDelta = computeDelta(current, aggregatedContent);
             }
 
             return new StreamDelta(reasoningDelta, contentDelta);
@@ -509,7 +514,9 @@ public abstract class AbstractOpenAIStyleChatClient implements ChatClient {
      * 不可复用本方法。
      */
     protected String computeDelta(String current, StringBuilder aggregated) {
-        if (!StringUtils.hasText(current)) {
+        // 空串（非空白）才跳过——纯换行的 current 必须产生 delta，
+        // 否则流式分片边界上的换行会被吞掉（Markdown 退化单行字墙的真机根因之一）
+        if (current == null || current.isEmpty()) {
             return null;
         }
         String accumulated = aggregated.toString();
@@ -527,8 +534,13 @@ public abstract class AbstractOpenAIStyleChatClient implements ChatClient {
     }
 
     protected String sanitizeContent(String content) {
-        String cleaned = THINK_BLOCK_PATTERN.matcher(content).replaceAll("");
+        String cleaned = stripThinkBlocks(content);
         return cleaned.strip();
+    }
+
+    /** 仅剥离 think 块，保留首尾与内嵌换行——流式 delta 必须用它，见 parseStreamContent */
+    protected String stripThinkBlocks(String content) {
+        return THINK_BLOCK_PATTERN.matcher(content).replaceAll("");
     }
 
     protected boolean shouldRetry(RestClientResponseException ex) {

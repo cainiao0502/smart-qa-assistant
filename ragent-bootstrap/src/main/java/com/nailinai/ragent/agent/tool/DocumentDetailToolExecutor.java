@@ -67,10 +67,12 @@ public class DocumentDetailToolExecutor implements ToolExecutor {
         traceArguments.put("docId", detail.getId());
         traceArguments.put("documentName", detail.getName());
 
-        // 深读过的文档就是最终回答的主要依据，其切片必须进入引用溯源，
-        // 否则前端 ReferencePanel 拿不到来源（此前固定返回 List.of() 导致 references 为空）
+        // 深读过的文档其切片可进入引用溯源，但必须有上限：planner 常用 document_detail
+        // 浏览知识库（如「你能干什么」类元问题），把整份文档的全部切片（可达 26+ 条）
+        // 塞进参考来源会让引用面板被无关内容淹没——截断到与观察摘要展示数一致（8 条）
         List<ReferenceChunkResponse> references = detail.getChunks() == null ? List.of()
                 : detail.getChunks().stream()
+                        .limit(8)
                         .map(chunk -> ReferenceChunkResponse.builder()
                                 .docId(detail.getId())
                                 .documentName(detail.getName())

@@ -464,7 +464,7 @@ public class ChatServiceImpl implements ChatService {
                             }
                         },
                         chunk -> {
-                            if (StringUtils.hasText(chunk)) {
+                            if (chunk != null && !chunk.isEmpty()) {
                                 answerBuilder.append(chunk);
                                 messageOptimizer.accept(chunk);
                             }
@@ -757,7 +757,7 @@ public class ChatServiceImpl implements ChatService {
                         }
                     },
                     chunk -> {
-                        if (StringUtils.hasText(chunk)) {
+                        if (chunk != null && !chunk.isEmpty()) {
                             answerBuilder.append(chunk);
                             messageOptimizer.accept(chunk);
                         }
