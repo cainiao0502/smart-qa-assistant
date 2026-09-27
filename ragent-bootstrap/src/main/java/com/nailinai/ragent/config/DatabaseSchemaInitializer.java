@@ -5,6 +5,7 @@ import org.slf4j.LoggerFactory;
 import org.springframework.boot.ApplicationRunner;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
+import org.springframework.core.annotation.Order;
 import org.springframework.jdbc.core.JdbcTemplate;
 
 @Configuration
@@ -12,7 +13,13 @@ public class DatabaseSchemaInitializer {
 
     private static final Logger log = LoggerFactory.getLogger(DatabaseSchemaInitializer.class);
 
+    /**
+     * Order(0)：必须先于 ChunkTokenBackfillRunner（Order(10)）执行——
+     * 回填 SQL 依赖本 runner 建出的 chunk_tokens 列，顺序颠倒会导致启动失败
+     * （column "chunk_tokens" does not exist，真机启动已复现过一次）。
+     */
     @Bean
+    @Order(0)
     public ApplicationRunner ensureChatPersistenceSchema(JdbcTemplate jdbcTemplate) {
         return args -> {
             // 旧库升级：document_chunk 没有 chunk_tokens 列时，补列并把旧的 tsv 生成列
