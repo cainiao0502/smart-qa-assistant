@@ -7,6 +7,23 @@
 
 ### Added
 
+- **上下文预算（`PromptBudget`）**：单次 LLM 请求的输入预算分配器，参照 LlamaIndex
+  `ContextAssembler` 的 budget-based packing。此前五个上下文来源（历史 / 检索切片 /
+  知识库目录 / 工具补充上下文 / 步骤观察）各自按「条数」或「字符数」独立裁剪，
+  **没有任何一处计算总量**，系统不知道自己会不会超出模型窗口，只能等供应商返回 400
+  （走 `ModelRouter` 时还会被当成供应商故障记熔断、并拿同一超长请求重试下一个候选）。
+  现在 `app.context-budget.*` 显式声明窗口，装配时按优先级分配：检索切片(6) > 对话历史(5)
+  > 技能目录(4) > 工具观察(3) > 知识库目录(2) > 步骤观察(1)。分配用 water-filling
+  （满足的段落把剩余额度退还），避免「预算没用完就已在截断」；被裁剪的段落追加
+  `[本节因超出上下文预算省略 N 字符]` 标记，整段丢弃则不留空标记。
+  - **未超限时是完全的 no-op**：内容逐字不变、不重排，因此不改变现有请求的提示词。
+  - **不可裁剪的内容不进预算集合**：system prompt 与用户提问只作为 `reservedInputTokens`
+    计入窗口占用，从结构上杜绝「裁掉了模型正在回答的问题」。
+  - 工具 schema JSON 与输出预留（`max_tokens`）一并计入预算——工具声明多了能占几千 token，
+    是常见漏算项。
+- **`ragent-bootstrap/src/test/java/com/nailinai/ragent/util/PromptBudgetTest.java`**：
+  9 条用例锁定「未超限零改动 / 低优先级先归零 / 裁剪留痕 / 零预算不留残渣 / 代理对安全」等性质。
+
 - **small-to-big 检索**：检索命中后按 `(doc_id, chunk_index ± window)` 取相邻切片拼入上下文
   （`app.rag.context-expansion.*`，默认开、window=1），解决「小切片匹配准但缺上下文」的
   两难（参照 Dify parent-child 模式）；相邻切片按 chunkOverlap 做尽力去重，命中片保持原文完整。
