@@ -1,6 +1,5 @@
 package com.nailinai.ragent.eval;
 
-import com.nailinai.ragent.chat.retrieve.DocDiversityPostProcessor;
 import com.nailinai.ragent.chat.retrieve.RerankPostProcessor;
 
 import com.nailinai.ragent.chat.retrieve.DedupPostProcessor;
@@ -14,10 +13,7 @@ import com.nailinai.ragent.dto.request.ChatRequest;
 import com.nailinai.ragent.dto.response.RetrievalResult;
 import com.nailinai.ragent.entity.DocumentChunk;
 import com.nailinai.ragent.infra.chat.ChatClient;
-import com.nailinai.ragent.infra.rerank.RerankClient;
 import com.nailinai.ragent.infra.embedding.EmbeddingClient;
-import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Component;
 
 import java.util.ArrayList;
@@ -41,40 +37,23 @@ public class RagEvaluator {
 
     private final EmbeddingClient embeddingClient;
     private final ChatClient chatClient;
-    private final MultiChannelRetriever defaultRetriever;
     private final List<SearchChannel> channels;
-    private final double rerankSemanticWeight;
-    private final double rerankLexicalWeight;
-    /** 每文档席位上限（0=关闭）：与生产路径共用配置，>0 时消融各组合都挂载多样性处理器 */
-    private final int diversityMaxPerDoc;
-    /** cross-encoder 开关：与生产路径共用配置。曾因手动 new 用三参构造硬编码 false，
-     * 导致消融的 rerank 永远是启发式、cross-encoder 从未参与评估（真机 Run A 发现） */
-    private final boolean crossEncoderEnabled;
-    /** 可选的 cross-encoder 客户端：手动 new 的 RerankPostProcessor 不经 Spring 注入，
-     * 必须显式传递——漏传会让 cross-encoder 分支静默退回启发式（真机 Run A 发现） */
-    private RerankClient rerankClient;
-
-    @Autowired(required = false)
-    public void setRerankClient(RerankClient rerankClient) {
-        this.rerankClient = rerankClient;
-    }
+    /**
+     * Spring 装配的生产处理器链（去重 → 席位上限 → 重排，按 order 排序）。
+     * 评估链路直接复用它再做消融过滤——这是「评估与生产同构」的保障：
+     * 任何手动 new 处理器的做法都会重现 crossEncoderEnabled 硬编码、rerankClient
+     * 漏传一类的静默失真缺陷。
+     */
+    private final List<SearchPostProcessor> productionProcessors;
 
     public RagEvaluator(EmbeddingClient embeddingClient,
                         ChatClient chatClient,
-                        MultiChannelRetriever defaultRetriever,
                         List<SearchChannel> channels,
-                        @Value("${app.rag.rerank.semantic-weight:0.75}") double rerankSemanticWeight,
-                        @Value("${app.rag.rerank.lexical-weight:0.25}") double rerankLexicalWeight,
-                        @Value("${app.rag.diversity.max-per-doc:0}") int diversityMaxPerDoc,
-                        @Value("${app.rag.rerank.cross-encoder.enabled:false}") boolean crossEncoderEnabled) {
+                        List<SearchPostProcessor> productionProcessors) {
         this.embeddingClient = embeddingClient;
         this.chatClient = chatClient;
-        this.defaultRetriever = defaultRetriever;
         this.channels = channels;
-        this.rerankSemanticWeight = rerankSemanticWeight;
-        this.rerankLexicalWeight = rerankLexicalWeight;
-        this.diversityMaxPerDoc = Math.max(0, diversityMaxPerDoc);
-        this.crossEncoderEnabled = crossEncoderEnabled;
+        this.productionProcessors = productionProcessors == null ? List.of() : List.copyOf(productionProcessors);
     }
 
     /**
@@ -114,28 +93,20 @@ public class RagEvaluator {
     }
 
     /**
-     * 按消融组合构造检索服务：查询改写开关由构造参数控制；
-     * 重排开关通过是否装配 RerankPostProcessor 控制。
+     * 按消融组合构造检索服务。
      *
-     * <p>历史缺陷：rerank=true 分支曾直接复用 defaultRetriever，而它的重排行为
-     * 取决于全局配置 app.rag.rerank.enabled——配置关闭时，消融报告里的
-     * "rerank on" 一列实际测的仍是 off，结论直接错误。这里显式构造一个
-     * 强制 enabled=true 的重排器（权重读同一份配置），使消融组合与全局配置解耦。
+     * <p><b>同构原则</b>：处理器链直接复用 Spring 装配的生产链（{@code productionProcessors}），
+     * 消融开关只做「过滤」——rerank=false 时从链中移除 RerankPostProcessor，而不是手工重建。
+     * 这样生产链上新增/调整处理器时评估自动跟随，杜绝「手动 new 绕过 Spring 装配」系列缺陷
+     * （crossEncoderEnabled 硬编码 false、rerankClient 漏传，均曾在真机导致评估静默失真）。</p>
+     *
+     * <p>查询改写开关由 RetrievalServiceImpl 构造参数控制；small-to-big 相邻扩展与改写缓存
+     * 属于服务期增强，评估显式关闭以保证指标口径稳定。</p>
      */
     private RetrievalService buildRetrievalService(boolean rewrite, boolean rerank) {
-        // 与生产路径一致的后处理器链：去重 → （席位上限）→ 重排。
-        // 席位上限 >0 时消融各组合都挂载，用于线上评估验证多样性效果。
-        List<SearchPostProcessor> processors = new ArrayList<>();
-        processors.add(new DedupPostProcessor());
-        if (diversityMaxPerDoc > 0) {
-            processors.add(new DocDiversityPostProcessor(diversityMaxPerDoc));
-        }
-        if (rerank) {
-            RerankPostProcessor rerankPostProcessor =
-                    new RerankPostProcessor(true, rerankSemanticWeight, rerankLexicalWeight, crossEncoderEnabled);
-            // 手动 new 的实例不经 Spring 注入：cross-encoder 客户端必须显式传递
-            rerankPostProcessor.setRerankClient(rerankClient);
-            processors.add(rerankPostProcessor);
+        List<SearchPostProcessor> processors = new ArrayList<>(productionProcessors);
+        if (!rerank) {
+            processors.removeIf(processor -> processor instanceof RerankPostProcessor);
         }
         MultiChannelRetriever retriever = new MultiChannelRetriever(channels, processors);
         // 评估测的是「检索命中了什么」，small-to-big 的相邻正文扩展属于服务期增强，

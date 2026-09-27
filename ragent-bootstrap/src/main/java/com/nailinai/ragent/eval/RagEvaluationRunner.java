@@ -32,6 +32,7 @@ public class RagEvaluationRunner implements ApplicationRunner {
     private final RagEvaluator ragEvaluator;
     private final RagSemanticEvaluator semanticEvaluator;
     private final ObjectMapper objectMapper;
+    private final org.springframework.jdbc.core.JdbcTemplate jdbcTemplate;
     private final boolean enabled;
     private final boolean semanticEnabled;
     private final String evaluationSetPath;
@@ -47,6 +48,7 @@ public class RagEvaluationRunner implements ApplicationRunner {
     public RagEvaluationRunner(RagEvaluator ragEvaluator,
                                RagSemanticEvaluator semanticEvaluator,
                                ObjectMapper objectMapper,
+                               org.springframework.jdbc.core.JdbcTemplate jdbcTemplate,
                                @Value("${app.eval.enabled:false}") boolean enabled,
                                @Value("${app.eval.semantic-enabled:false}") boolean semanticEnabled,
                                @Value("${app.eval.set-path:data/eval/eval-set.json}") String evaluationSetPath,
@@ -55,6 +57,7 @@ public class RagEvaluationRunner implements ApplicationRunner {
         this.ragEvaluator = ragEvaluator;
         this.semanticEvaluator = semanticEvaluator;
         this.objectMapper = objectMapper;
+        this.jdbcTemplate = jdbcTemplate;
         this.enabled = enabled;
         this.semanticEnabled = semanticEnabled;
         this.evaluationSetPath = evaluationSetPath;
@@ -75,6 +78,13 @@ public class RagEvaluationRunner implements ApplicationRunner {
         RagEvaluationSet set = objectMapper.readValue(file, RagEvaluationSet.class);
         if (set.queries().isEmpty()) {
             log.warn("RAG evaluation skipped: empty evaluation set at {}", evaluationSetPath);
+            return;
+        }
+        if (!evaluationSetInSyncWithDb(set)) {
+            // 评估集与库脱节时继续跑只会得到全 0 的无效报告，还白白消耗 embedding 调用——
+            // 直接中止并给出明确的修复指引（真机教训：aaa.txt 引用的一批文档已被重建的库清空）
+            log.error("RAG evaluation aborted: 评估集引用的文档在库中一个都不存在（评估集与库脱节）。"
+                    + "请核对 kbId={} 下的文档名并同步 data/eval/eval-set.json", set.kbId());
             return;
         }
 
@@ -143,6 +153,31 @@ public class RagEvaluationRunner implements ApplicationRunner {
         }
 
         log.info("======== RAG evaluation finished ========");
+    }
+
+    /**
+     * 评估集健全性检查：期望文档名与库内文档名（contains 匹配，容忍 UUID 前缀）
+     * 至少命中一个才算同步；全不命中即视为脱节。
+     */
+    private boolean evaluationSetInSyncWithDb(RagEvaluationSet set) {
+        List<String> expectedNames = set.queries().stream()
+                .flatMap(query -> query.expectedDocuments().stream())
+                .filter(name -> name != null && !name.isBlank())
+                .distinct()
+                .toList();
+        if (expectedNames.isEmpty()) {
+            return true;
+        }
+        List<String> dbNames = jdbcTemplate.queryForList(
+                "SELECT name FROM document WHERE kb_id = ?", String.class, set.kbId());
+        boolean anyMatched = expectedNames.stream()
+                .anyMatch(expected -> dbNames.stream()
+                        .anyMatch(name -> name != null
+                                && name.toLowerCase().contains(expected.trim().toLowerCase())));
+        if (!anyMatched) {
+            log.error("expected={} but kbId={} documents={}", expectedNames, set.kbId(), dbNames);
+        }
+        return anyMatched;
     }
 
     private void runSemanticEvaluation(List<QueryEvaluation> queries) {

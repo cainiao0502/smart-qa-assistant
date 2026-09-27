@@ -1,6 +1,6 @@
 package com.nailinai.ragent.eval;
 
-import com.nailinai.ragent.chat.retrieve.MultiChannelRetriever;
+import com.nailinai.ragent.chat.retrieve.DedupPostProcessor;
 import com.nailinai.ragent.chat.retrieve.SearchChannel;
 import com.nailinai.ragent.chat.retrieve.SearchResult;
 import com.nailinai.ragent.entity.DocumentChunk;
@@ -38,8 +38,6 @@ class RagEvaluatorTest {
     @Mock
     private ChatClient chatClient;
     @Mock
-    private MultiChannelRetriever defaultRetriever;
-    @Mock
     private SearchChannel dummyChannel;
 
     @BeforeEach
@@ -54,7 +52,7 @@ class RagEvaluatorTest {
         when(dummyChannel.search(any())).thenReturn(List.of(
                 result("aaa.txt"),
                 result("task.txt")));
-        RagEvaluator evaluator = new RagEvaluator(embeddingClient, chatClient, defaultRetriever, List.of(dummyChannel), 0.75, 0.25, 0, false);
+        RagEvaluator evaluator = new RagEvaluator(embeddingClient, chatClient, List.of(dummyChannel), List.of(new DedupPostProcessor()));
 
         RagEvaluationSet set = new RagEvaluationSet(1L, 4, List.of(
                 new RagEvaluationQuery("问题", List.of("aaa.txt", "task.txt"), null)));
@@ -73,7 +71,7 @@ class RagEvaluatorTest {
     void noHit_shouldReturnZeroRecall() {
         when(dummyChannel.search(any())).thenReturn(List.of(
                 result("other.txt")));
-        RagEvaluator evaluator = new RagEvaluator(embeddingClient, chatClient, defaultRetriever, List.of(dummyChannel), 0.75, 0.25, 0, false);
+        RagEvaluator evaluator = new RagEvaluator(embeddingClient, chatClient, List.of(dummyChannel), List.of(new DedupPostProcessor()));
 
         RagEvaluationSet set = new RagEvaluationSet(1L, 4, List.of(
                 new RagEvaluationQuery("问题", List.of("aaa.txt"), null)));
@@ -88,7 +86,7 @@ class RagEvaluatorTest {
     void emptyExpected_shouldBePerfectRecall() {
         when(dummyChannel.search(any())).thenReturn(List.of(
                 result("aaa.txt")));
-        RagEvaluator evaluator = new RagEvaluator(embeddingClient, chatClient, defaultRetriever, List.of(dummyChannel), 0.75, 0.25, 0, false);
+        RagEvaluator evaluator = new RagEvaluator(embeddingClient, chatClient, List.of(dummyChannel), List.of(new DedupPostProcessor()));
 
         RagEvaluationSet set = new RagEvaluationSet(1L, 4, List.of(
                 new RagEvaluationQuery("问题", List.of(), null)));
@@ -102,7 +100,7 @@ class RagEvaluatorTest {
     void documentNameContains_shouldMatch() {
         when(dummyChannel.search(any())).thenReturn(List.of(
                 result("6bebfaa8-3d54-4870-8b02-2eeca0ea47f3-aaa.txt")));
-        RagEvaluator evaluator = new RagEvaluator(embeddingClient, chatClient, defaultRetriever, List.of(dummyChannel), 0.75, 0.25, 0, false);
+        RagEvaluator evaluator = new RagEvaluator(embeddingClient, chatClient, List.of(dummyChannel), List.of(new DedupPostProcessor()));
 
         RagEvaluationSet set = new RagEvaluationSet(1L, 4, List.of(
                 new RagEvaluationQuery("问题", List.of("aaa.txt"), null)));
@@ -118,7 +116,7 @@ class RagEvaluatorTest {
         // 修复后只允许「期望名出现在返回名中」的方向。
         when(dummyChannel.search(any())).thenReturn(List.of(
                 result("t")));
-        RagEvaluator evaluator = new RagEvaluator(embeddingClient, chatClient, defaultRetriever, List.of(dummyChannel), 0.75, 0.25, 0, false);
+        RagEvaluator evaluator = new RagEvaluator(embeddingClient, chatClient, List.of(dummyChannel), List.of(new DedupPostProcessor()));
 
         RagEvaluationSet set = new RagEvaluationSet(1L, 4, List.of(
                 new RagEvaluationQuery("问题", List.of("long-report.txt"), null)));
@@ -133,7 +131,7 @@ class RagEvaluatorTest {
         when(dummyChannel.search(any()))
                 .thenReturn(List.of(result("aaa.txt")))
                 .thenReturn(List.of(result("unrelated.txt")));
-        RagEvaluator evaluator = new RagEvaluator(embeddingClient, chatClient, defaultRetriever, List.of(dummyChannel), 0.75, 0.25, 0, false);
+        RagEvaluator evaluator = new RagEvaluator(embeddingClient, chatClient, List.of(dummyChannel), List.of(new DedupPostProcessor()));
 
         RagEvaluationSet set = new RagEvaluationSet(1L, 4, List.of(
                 new RagEvaluationQuery("问题1", List.of("aaa.txt"), null),

@@ -185,6 +185,9 @@ app:
     enabled: ${APP_EVAL_ENABLED:false}
     semantic-enabled: ${APP_EVAL_SEMANTIC_ENABLED:false}
     set-path: ${APP_EVAL_SET_PATH:data/eval/eval-set.json}
+    # 跳过含查询改写的消融组合（rewrite 列依赖 chat 模型）：
+    # chat 供应商不可用/余额耗尽时开启，只跑 noRewrite / minimal / 阈值三列
+    skip-rewrite: ${APP_EVAL_SKIP_REWRITE:false}
   mcp:
     enabled: ${APP_MCP_ENABLED:false}
     request-timeout-ms: ${APP_MCP_REQUEST_TIMEOUT_MS:30000}
