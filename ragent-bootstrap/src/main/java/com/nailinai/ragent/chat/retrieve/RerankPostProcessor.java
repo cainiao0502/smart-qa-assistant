@@ -127,7 +127,7 @@ public class RerankPostProcessor implements SearchPostProcessor {
                     + lexicalScore * lexicalWeight
                     + rrfScore * rrfWeight;
             chunk.setRerankScore(rerankScore);
-            chunk.setHitReason(buildHitReason(chunk, context, lexicalScore, result.channel()));
+            chunk.setHitReason(buildHitReason(chunk, context, lexicalScore, result.channel(), crossEncoderScores != null));
         }
 
         return inputsList.stream()
@@ -241,15 +241,23 @@ public class RerankPostProcessor implements SearchPostProcessor {
         return tokens;
     }
 
-    private String buildHitReason(DocumentChunk chunk, SearchContext context, double lexicalScore, String channel) {
+    private String buildHitReason(DocumentChunk chunk, SearchContext context, double lexicalScore,
+                                  String channel, boolean crossEncoderActive) {
         List<String> reasons = new java.util.ArrayList<>();
-        if (chunk.getScore() != null) {
-            reasons.add("向量相似度 " + formatDecimal(chunk.getScore())
-                    + "，高于阈值 " + formatDecimal(context.scoreThreshold()));
-        }
-        if (chunk.getRerankScore() != null) {
-            reasons.add("重排分 " + formatDecimal(chunk.getRerankScore())
+        if (crossEncoderActive) {
+            // cross-encoder 模式：语义分量来自重排模型而非向量 cosine，
+            // 此时「向量相似度高于阈值」的表述是错的（真正过阈值的是融合后的 rerankScore）
+            reasons.add("cross-encoder 重排分 " + formatDecimal(chunk.getRerankScore())
                     + "，关键词匹配度 " + formatDecimal(lexicalScore));
+        } else {
+            if (chunk.getScore() != null) {
+                reasons.add("向量相似度 " + formatDecimal(chunk.getScore())
+                        + "，高于阈值 " + formatDecimal(context.scoreThreshold()));
+            }
+            if (chunk.getRerankScore() != null) {
+                reasons.add("重排分 " + formatDecimal(chunk.getRerankScore())
+                        + "，关键词匹配度 " + formatDecimal(lexicalScore));
+            }
         }
         reasons.add("召回通道: " + channel);
         if (!context.originalQuery().equals(context.effectiveQuery())) {

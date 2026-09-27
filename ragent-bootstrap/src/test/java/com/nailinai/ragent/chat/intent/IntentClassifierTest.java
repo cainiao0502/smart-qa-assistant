@@ -127,6 +127,34 @@ class IntentClassifierTest {
         assertThat(decision.intent()).isEqualTo(Intent.KB);
     }
 
+    @Test
+    @DisplayName("纯问候语（选了知识库+Agent开启）：规则快速通道直判 SYSTEM，不调 LLM")
+    void pureGreeting_shouldBypassLlmAndReturnSystem() {
+        // 问候快速通道先于 LLM 分类与工具目录查询：chatClient / mcpToolCatalog 均不会被触达
+
+        for (String greeting : new String[]{"你好", "您好！", "hi", "HELLO", "在吗", "早上好", "你好呀"}) {
+            ChatRequest request = buildAgentRequest();
+            request.setQuestion(greeting);
+            IntentDecision decision = classifier.classify(request);
+            assertThat(decision.intent()).as("greeting: " + greeting).isEqualTo(Intent.SYSTEM);
+        }
+        verify(chatClient, never()).chat(anyString());
+    }
+
+    @Test
+    @DisplayName("问候开头的真实问题不误伤：仍走完整分类")
+    void greetingWithRealQuestion_shouldNotMatchFastPath() {
+        when(mcpToolCatalog.listAllTools()).thenReturn(List.of());
+        when(chatClient.chat(anyString())).thenReturn("{\"intent\":\"KB\"}");
+
+        ChatRequest request = buildAgentRequest();
+        request.setQuestion("你好，帮我查一下报销流程");
+        IntentDecision decision = classifier.classify(request);
+
+        assertThat(decision.intent()).isEqualTo(Intent.KB);
+        verify(chatClient).chat(anyString());
+    }
+
     private ChatRequest buildAgentRequest() {
         ChatRequest request = new ChatRequest();
         request.setSessionId("sess-1");

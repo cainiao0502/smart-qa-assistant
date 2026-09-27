@@ -20,6 +20,17 @@ public class IntentClassifier {
 
     private static final Logger log = LoggerFactory.getLogger(IntentClassifier.class);
 
+    /**
+     * 纯问候/寒暄快速通道：问候语是封闭集合，用确定性规则直判 SYSTEM（直连回答、
+     * 零检索零意图分类），不依赖 LLM 对分类规则的服从性。整条匹配（非包含）+
+     * 长度上限，避免误伤「你好，帮我查一下报销流程」这类问候开头的真实问题。
+     * 真机教训：选了知识库的「你好」曾被 LLM 分类为 KB，走完 26 秒 Agent 循环。
+     */
+    private static final java.util.regex.Pattern GREETING_PATTERN = java.util.regex.Pattern.compile(
+            "^(你好|您好|您好呀|你好呀|哈喽|哈罗|嗨|嗨呀|hi|hey|hello|hello there|在吗|在不在"
+                    + "|早上好|中午好|下午好|晚上好|晚安|早上好啊|吃了吗|好久不见)[!！？?。.~～\\s]*$",
+            java.util.regex.Pattern.CASE_INSENSITIVE);
+
     private final ChatClient chatClient;
     private final ObjectMapper objectMapper;
     private final McpToolCatalog mcpToolCatalog;
@@ -46,6 +57,13 @@ public class IntentClassifier {
     }
 
     public IntentDecision classify(ChatRequest request) {
+        // 问候快速通道：确定性直判，先于一切 LLM 调用与知识库分支
+        String question = request.getQuestion() == null ? "" : request.getQuestion().trim();
+        if (!question.isEmpty() && question.length() <= 20
+                && GREETING_PATTERN.matcher(question.toLowerCase()).matches()) {
+            return IntentDecision.system();
+        }
+
         if (request.getKbId() == null
                 && (request.getSkillNames() == null || request.getSkillNames().isEmpty())
                 && !Boolean.TRUE.equals(request.getAgentEnabled())) {
@@ -102,6 +120,7 @@ public class IntentClassifier {
                 %s
 
                 Rules:
+                - If the question is a greeting, small talk or chit-chat (e.g. "你好", "在吗", "早上好"), choose SYSTEM even when a knowledge base is selected — greetings never need retrieval.
                 - If a knowledge base is selected and the question asks about document content, use KB.
                 - If skills or MCP tools are selected and the question needs external data, use MCP.
                 - If the question is a general coding, writing, or planning request with no need for KB or tools, use SYSTEM.
