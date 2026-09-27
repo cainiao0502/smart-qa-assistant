@@ -104,6 +104,22 @@ app:
       # 大 chunk 拆片限速（打字机演示效果，每片 10ms）：默认关闭，LLM 流式直发；
       # 打字机动画应由前端实现。小 chunk 合并窗口（减少 SSE 事件数）不受影响
       split-enabled: ${APP_CHAT_CHUNK_SPLIT_ENABLED:false}
+  # 单请求输入预算（PromptBudget）：此前五个上下文来源各自按条数/字符独立裁剪，
+  # 却没有任何一处与模型窗口比较过，超出时只能等供应商返回 400。这里把窗口显式声明出来，
+  # 超限时按优先级阶梯降级并在 prompt 里留痕。
+  context-budget:
+    enabled: ${APP_CONTEXT_BUDGET_ENABLED:true}
+    # 模型上下文窗口。多候选路由时按【最小窗口】配置——供应商切换后若窗口变小，
+    # 按大窗口配会出现「原本刚好、切换后溢出」的诡异故障
+    window-tokens: ${APP_CONTEXT_WINDOW_TOKENS:128000}
+    # 为生成预留的输出 token 数。
+    # ⚠️ 本项目只在上下文压缩的摘要请求上显式下发 max_tokens；Planner 与最终回答请求
+    # 都不带 max_tokens，真实占用由「供应商默认输出上限」决定。因此本值必须 >= 所有候选
+    # 供应商的默认输出上限，否则预算会系统性低估输出预留（多候选路由切换供应商时尤其要注意：
+    # 各家的默认上限并不相同）。
+    reserved-output-tokens: ${APP_CONTEXT_RESERVED_OUTPUT_TOKENS:4096}
+    # 粗粒度估算器（TokenEstimateUtils）偏差约 ±30%，留一成余量
+    safety-ratio: ${APP_CONTEXT_SAFETY_RATIO:0.9}
   agent:
     # 6 步对「单问句」够用（实测 2 次 LLM 调用即可收尾），但三问句会在收尾前用尽；
     # 提到 8 让多子问题有机会答全（成本影响：每步约 +1 次 LLM 调用，其中固定前缀大多命中 prompt 缓存）
