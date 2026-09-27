@@ -153,7 +153,9 @@ app:
     chunk-token-backfill:
       enabled: true
     query-rewrite:
-      enabled: true
+      # 2026-09-27 线上消融评估（32 条中文参数型查询）：改写开/关 recall 完全相同（0.906），
+      # 零收益却每轮多付 32 次 LLM 调用，故默认关闭。换口语化长查询场景时可再开启并用消融验证。
+      enabled: false
       # 改写结果 LRU 容量（按原问题缓存改写结果，重复问题/agent 二次检索不再重复调用）；
       # 0 为关闭。评估路径不受此配置影响（评估器内部强制关闭缓存）
       cache-size: 256
@@ -162,6 +164,10 @@ app:
         enabled: true   # 关置 false 即纯向量检索（消融实验用）
       vector:
         enabled: true   # 关置 false 即纯关键词检索（消融实验用）
+    # 每文档席位上限（结果多样性）：限制单个文档在去重后序列中最多占用的席位数，
+    # 防止多切片大文档占满 top-k 把唯一命中的小文档挤出（0=关闭，位于去重之后、重排之前）
+    diversity:
+      max-per-doc: ${APP_RAG_DIVERSITY_MAX_PER_DOC:0}
     rerank:
       enabled: true
       candidate-multiplier: 3   # 各检索通道按 topK×N 召回候选，再进 RRF 融合与加权打分；配 <1 时按 topK 处理

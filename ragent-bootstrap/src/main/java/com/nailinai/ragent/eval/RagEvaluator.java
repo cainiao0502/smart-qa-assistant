@@ -1,11 +1,13 @@
 package com.nailinai.ragent.eval;
 
+import com.nailinai.ragent.chat.retrieve.DocDiversityPostProcessor;
 import com.nailinai.ragent.chat.retrieve.RerankPostProcessor;
 
 import com.nailinai.ragent.chat.retrieve.DedupPostProcessor;
 import com.nailinai.ragent.chat.retrieve.MultiChannelRetriever;
 import com.nailinai.ragent.chat.retrieve.NeighborContextExpander;
 import com.nailinai.ragent.chat.retrieve.SearchChannel;
+import com.nailinai.ragent.chat.retrieve.SearchPostProcessor;
 import com.nailinai.ragent.chat.service.RetrievalService;
 import com.nailinai.ragent.chat.service.impl.RetrievalServiceImpl;
 import com.nailinai.ragent.dto.request.ChatRequest;
@@ -16,6 +18,7 @@ import com.nailinai.ragent.infra.embedding.EmbeddingClient;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Component;
 
+import java.util.ArrayList;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Objects;
@@ -38,19 +41,23 @@ public class RagEvaluator {
     private final List<SearchChannel> channels;
     private final double rerankSemanticWeight;
     private final double rerankLexicalWeight;
+    /** 每文档席位上限（0=关闭）：与生产路径共用配置，>0 时消融各组合都挂载多样性处理器 */
+    private final int diversityMaxPerDoc;
 
     public RagEvaluator(EmbeddingClient embeddingClient,
                         ChatClient chatClient,
                         MultiChannelRetriever defaultRetriever,
                         List<SearchChannel> channels,
                         @Value("${app.rag.rerank.semantic-weight:0.75}") double rerankSemanticWeight,
-                        @Value("${app.rag.rerank.lexical-weight:0.25}") double rerankLexicalWeight) {
+                        @Value("${app.rag.rerank.lexical-weight:0.25}") double rerankLexicalWeight,
+                        @Value("${app.rag.diversity.max-per-doc:0}") int diversityMaxPerDoc) {
         this.embeddingClient = embeddingClient;
         this.chatClient = chatClient;
         this.defaultRetriever = defaultRetriever;
         this.channels = channels;
         this.rerankSemanticWeight = rerankSemanticWeight;
         this.rerankLexicalWeight = rerankLexicalWeight;
+        this.diversityMaxPerDoc = Math.max(0, diversityMaxPerDoc);
     }
 
     /**
@@ -92,14 +99,17 @@ public class RagEvaluator {
      * 强制 enabled=true 的重排器（权重读同一份配置），使消融组合与全局配置解耦。
      */
     private RetrievalService buildRetrievalService(boolean rewrite, boolean rerank) {
-        MultiChannelRetriever retriever;
-        if (rerank) {
-            retriever = new MultiChannelRetriever(channels, List.of(
-                    new DedupPostProcessor(),
-                    new RerankPostProcessor(true, rerankSemanticWeight, rerankLexicalWeight)));
-        } else {
-            retriever = new MultiChannelRetriever(channels, List.of(new DedupPostProcessor()));
+        // 与生产路径一致的后处理器链：去重 → （席位上限）→ 重排。
+        // 席位上限 >0 时消融各组合都挂载，用于线上评估验证多样性效果。
+        List<SearchPostProcessor> processors = new ArrayList<>();
+        processors.add(new DedupPostProcessor());
+        if (diversityMaxPerDoc > 0) {
+            processors.add(new DocDiversityPostProcessor(diversityMaxPerDoc));
         }
+        if (rerank) {
+            processors.add(new RerankPostProcessor(true, rerankSemanticWeight, rerankLexicalWeight));
+        }
+        MultiChannelRetriever retriever = new MultiChannelRetriever(channels, processors);
         // 评估测的是「检索命中了什么」，small-to-big 的相邻正文扩展属于服务期增强，
         // 会改变切片文本但不改变命中集合——这里显式关闭，保证指标口径稳定。
         // 改写缓存同样关闭（cache-size=0）：消融各组合要真实执行，不受同问题历史改写影响。

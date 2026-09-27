@@ -43,7 +43,7 @@ public class RetrievalServiceImpl implements RetrievalService {
                                 ChatClient chatClient,
                                 MultiChannelRetriever multiChannelRetriever,
                                 NeighborContextExpander neighborContextExpander,
-                                @Value("${app.rag.query-rewrite.enabled:true}") boolean queryRewriteEnabled,
+                                @Value("${app.rag.query-rewrite.enabled:false}") boolean queryRewriteEnabled,
                                 @Value("${app.rag.query-rewrite.cache-size:256}") int rewriteCacheSize) {
         this.embeddingClient = embeddingClient;
         this.chatClient = chatClient;
