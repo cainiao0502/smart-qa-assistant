@@ -4,16 +4,22 @@ import com.nailinai.ragent.agent.dto.AgentPlanItem;
 import com.nailinai.ragent.agent.dto.AgentStep;
 import com.nailinai.ragent.agent.dto.PlannerCurrentAction;
 import com.nailinai.ragent.agent.dto.PlannerDecision;
+import com.nailinai.ragent.config.ContextBudgetProperties;
 import com.nailinai.ragent.dto.request.ChatRequest;
 import com.nailinai.ragent.entity.ChatMessage;
 import com.nailinai.ragent.entity.DocumentChunk;
 import com.nailinai.ragent.framework.util.TextTruncator;
+import com.nailinai.ragent.framework.util.TokenEstimateUtils;
 import com.nailinai.ragent.infra.chat.ChatClient;
 import com.nailinai.ragent.infra.chat.ChatResponse;
 import com.nailinai.ragent.infra.chat.LlmRequest;
 import com.nailinai.ragent.infra.chat.ToolCall;
 import com.nailinai.ragent.infra.chat.ToolSpec;
 import com.nailinai.ragent.skill.SkillRegistry;
+import com.nailinai.ragent.util.PromptBudget;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 import org.springframework.util.StringUtils;
 
@@ -22,6 +28,7 @@ import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.Set;
 import java.util.stream.Collectors;
@@ -43,6 +50,8 @@ import java.util.stream.Collectors;
 @Service
 public class AgentPlannerService {
 
+    private static final Logger log = LoggerFactory.getLogger(AgentPlannerService.class);
+
     /** 控制类工具：提交执行计划 */
     static final String TOOL_SUBMIT_PLAN = "submit_plan";
     /** 控制类工具：结束本轮并进入最终回答 */
@@ -50,6 +59,29 @@ public class AgentPlannerService {
 
     /** planner 上下文里单条历史步骤 observation 的字符上限（工具层给全量，上下文层负责裁剪） */
     private static final int STEP_OBSERVATION_CONTEXT_CHARS = 800;
+
+    /**
+     * planner 上下文里检索切片的最大条数。
+     *
+     * <p>这是「条目级」上限，与 {@code app.rag.top-k}（回答链路的条数）刻意解耦：
+     * planner 只需要够判断的信息，不需要看到全部切片。改 top-k 不会连带影响这里。
+     */
+    private static final int MAX_RETRIEVAL_CHUNKS = 4;
+
+    /** planner 上下文取用的最近历史消息条数 */
+    private static final int MAX_HISTORY_MESSAGES = 4;
+
+    /** planner 提示词模板固定文字的 token 预留（分节标签等） */
+    private static final int TEMPLATE_OVERHEAD_TOKENS = 300;
+
+    /**
+     * planner 单次决策的输出上限。
+     *
+     * <p>决策输出是一个工具调用/计划 JSON，几百 token 量级；2048 给 submit_plan
+     * 的完整任务列表留足空间，同时防失控生成。请求带上该值后，预算公式里的
+     * 输出预留才与供应商约束对齐（此前从未设置，上限是未知数）。
+     */
+    private static final int PLANNER_MAX_OUTPUT_TOKENS = 2048;
 
     private static final ToolSpec SUBMIT_PLAN_SPEC = ToolSpec.of(
             TOOL_SUBMIT_PLAN,
@@ -70,6 +102,14 @@ public class AgentPlannerService {
     private final ToolExecutorRegistry toolExecutorRegistry;
     private final SkillRegistry skillRegistry;
 
+    /**
+     * 上下文预算配置。
+     *
+     * <p>以 setter 注入并允许缺省：单元测试直接 new 时按「不裁剪」处理——
+     * 与 {@code ChatServiceImpl#setApprovalRegistry} 同一约定。
+     */
+    private ContextBudgetProperties contextBudget;
+
     public AgentPlannerService(ChatClient chatClient,
                                ToolExecutorRegistry toolExecutorRegistry,
                                SkillRegistry skillRegistry) {
@@ -78,23 +118,66 @@ public class AgentPlannerService {
         this.skillRegistry = skillRegistry;
     }
 
+    @Autowired(required = false)
+    public void setContextBudget(ContextBudgetProperties contextBudget) {
+        this.contextBudget = contextBudget;
+    }
+
     public PlannerDecision decide(ChatRequest request,
                                   List<ChatMessage> history,
                                   List<DocumentChunk> retrievedChunks,
                                   List<AgentStep> priorSteps) {
+        String systemPrompt = buildSystemPrompt();
+        // 工具声明也要占窗口：schema 多了以后能占几千 token，漏算会让「预算够用」的判断失真
+        List<ToolSpec> toolSpecs = buildToolSpecs(request);
+        String userContent = buildContextBlock(request, history, retrievedChunks, priorSteps, systemPrompt, toolSpecs);
         List<Map<String, Object>> messages = List.of(
-                Map.of("role", "system", "content", buildSystemPrompt()),
-                Map.of("role", "user", "content", buildContextBlock(request, history, retrievedChunks, priorSteps))
+                Map.of("role", "system", "content", systemPrompt),
+                Map.of("role", "user", "content", userContent)
         );
 
-        LlmRequest llmRequest = LlmRequest.withTools(messages, buildToolSpecs(request));
+        // planner 输出只是一个工具调用决策，2048 足够容纳 submit_plan 的完整 JSON；
+        // 上限同时是失控止损闸——并让 isTruncatedWithToolCalls 的截断防护真正可能触发
+        LlmRequest llmRequest = LlmRequest.withTools(messages, toolSpecs, PLANNER_MAX_OUTPUT_TOKENS);
         ChatResponse response = chatClient.chat(llmRequest);
+        logEstimateDeviation(systemPrompt, userContent, toolSpecs, response);
         PlannerDecision decision = toDecision(response, priorSteps);
         if (decision != null) {
             // 用量随决策一起回传：主循环据此累计「本轮循环花了多少 token」
             decision.setUsage(response.usage());
         }
         return decision;
+    }
+
+    /**
+     * 记录「估算输入 token」与「供应商返回的真实 input token」的偏差。
+     *
+     * <p>本项目没有真实 tokenizer，预算靠 {@link TokenEstimateUtils} 估算，而
+     * {@code app.context-budget.safety-ratio} 就是为估算误差留的余量——这个值到底该配多少
+     * 不该靠猜。供应商的 usage 是 ground truth，把偏差打出来跑几轮即可按真实分布校准。
+     *
+     * <p>估算口径与实际口径都包含 system prompt、工具 schema 与用户消息；供应商的
+     * inputTokens 含缓存命中部分（缓存同样占窗口），正是需要比较的对象。
+     *
+     * <p>只在与估算偏离较大时打 INFO：正常偏差不打日志，避免每次决策刷一行噪声。
+     */
+    private void logEstimateDeviation(String systemPrompt,
+                                      String userContent,
+                                      List<ToolSpec> toolSpecs,
+                                      ChatResponse response) {
+        if (response == null || response.usage() == null || response.usage().inputTokens() <= 0) {
+            return;
+        }
+        int estimated = TokenEstimateUtils.estimate(systemPrompt)
+                + TokenEstimateUtils.estimate(userContent)
+                + toolSchemaTokens(toolSpecs);
+        int actual = response.usage().inputTokens();
+        double ratio = (double) estimated / actual;
+        if (ratio < 0.8 || ratio > 1.5) {
+            log.info("Prompt token estimate deviates from provider usage: estimated={}, actual={}, ratio={} "
+                            + "— recalibrate app.context-budget.safety-ratio if this recurs",
+                    estimated, actual, String.format(Locale.ROOT, "%.2f", ratio));
+        }
     }
 
     // ------------------------------------------------------------------
@@ -379,23 +462,24 @@ public class AgentPlannerService {
     private String buildContextBlock(ChatRequest request,
                                      List<ChatMessage> history,
                                      List<DocumentChunk> chunks,
-                                     List<AgentStep> priorSteps) {
+                                     List<AgentStep> priorSteps,
+                                     String systemPrompt,
+                                     List<ToolSpec> toolSpecs) {
         String historyText = history.stream()
-                .skip(Math.max(0, history.size() - 4L))
+                .skip(Math.max(0, history.size() - MAX_HISTORY_MESSAGES))
                 .map(message -> message.getRole() + ": " + message.getContent())
                 .collect(Collectors.joining("\n"));
 
-        String contextText = chunks.stream()
-                .limit(4)
+        // 一片一个段落：超限时丢的是整片引用，而不是把某个切片从中间切断
+        List<String> chunkBlocks = chunks.stream()
+                .limit(MAX_RETRIEVAL_CHUNKS)
                 .map(chunk -> {
                     String source = chunk.getDocumentName() == null ? "unknown" : chunk.getDocumentName();
                     return "[%s#%s] %s".formatted(source, chunk.getChunkIndex(), chunk.getChunkText());
                 })
-                .collect(Collectors.joining("\n\n"));
+                .toList();
 
-        String stepText = priorSteps.isEmpty()
-                ? "(empty)"
-                : priorSteps.stream()
+        String stepText = priorSteps.stream()
                 .map(step -> "step %d | type=%s | tool=%s | status=%s | reason=%s | observation=%s".formatted(
                         step.getStepIndex(),
                         blankAs(step.getStepType(), "-"),
@@ -434,6 +518,33 @@ public class AgentPlannerService {
                 ? "- General assistant mode: no knowledge base is selected, so knowledge-base tools are not available. For direct coding/writing/planning requests, prefer calling " + TOOL_FINISH + " right away instead of inventing prerequisite tasks.\n"
                 : "";
 
+        // 只有「证据类」内容进预算集合。system prompt、提问、既有计划、已完成任务键与
+        // 工具表都不参与分配——planner 丢了自己的计划或工具表就无法继续决策，
+        // 裁它们比裁证据危险得多，故一律作为已占用窗口计入 reservedInputTokens。
+        List<PromptBudget.Section> sections = new ArrayList<>();
+        if (StringUtils.hasText(historyText)) {
+            sections.add(PromptBudget.Section.of("history", PromptBudget.P_HISTORY, historyText));
+        }
+        for (String block : chunkBlocks) {
+            sections.add(PromptBudget.Section.of("retrieval", PromptBudget.P_RETRIEVAL, block));
+        }
+        if (StringUtils.hasText(skillContext)) {
+            sections.add(PromptBudget.Section.of("skill", PromptBudget.P_SKILL, skillContext));
+        }
+        if (StringUtils.hasText(stepText)) {
+            sections.add(PromptBudget.Section.of("steps", PromptBudget.P_STEPS, stepText));
+        }
+
+        PromptBudget.Result budget = applyContextBudget(
+                systemPrompt,
+                toolSpecs,
+                List.of(modeHint, latestPlanText, completedTaskText, request.getQuestion()),
+                sections);
+        String budgetedHistory = budget.groupText("history");
+        String budgetedContext = budget.groupText("retrieval");
+        String budgetedSkills = budget.groupText("skill");
+        String budgetedSteps = budget.groupText("steps");
+
         return """
                 %s\
                 Today is %s.
@@ -461,14 +572,61 @@ public class AgentPlannerService {
                 """.formatted(
                 modeHint,
                 LocalDate.now(),
-                historyText.isBlank() ? "(empty)" : historyText,
+                budgetedHistory.isBlank() ? "(empty)" : budgetedHistory,
                 request.getQuestion(),
-                contextText.isBlank() ? "(empty)" : contextText,
-                skillContext.isBlank() ? "(none)" : skillContext,
+                budgetedContext.isBlank() ? "(empty)" : budgetedContext,
+                budgetedSkills.isBlank() ? "(none)" : budgetedSkills,
                 latestPlanText,
                 completedTaskText,
-                stepText
+                budgetedSteps.isBlank() ? "(empty)" : budgetedSteps
         );
+    }
+
+    /**
+     * 按上下文预算装配 planner 上下文的可裁段落。
+     *
+     * <p>与回答链路共用 {@link PromptBudget}：两处若各留一套硬编码上限，调参时无法推理
+     * 「改了这个数会影响哪条链路」——这正是本轮改造要消除的问题。
+     *
+     * @param fixedParts 不参与分配但占窗口的固定文本（模式提示 / 既有计划 / 已完成任务键 / 提问）
+     */
+    private PromptBudget.Result applyContextBudget(String systemPrompt,
+                                                   List<ToolSpec> toolSpecs,
+                                                   List<String> fixedParts,
+                                                   List<PromptBudget.Section> sections) {
+        if (contextBudget == null || !contextBudget.isEnabled()) {
+            return PromptBudget.assemble(PromptBudget.Policy.unbounded(), sections);
+        }
+        int reservedInputTokens = TokenEstimateUtils.estimate(systemPrompt);
+        for (String fixed : fixedParts) {
+            reservedInputTokens += TokenEstimateUtils.estimate(fixed);
+        }
+        // 工具 schema 也占窗口：声明多了以后能占几千 token，漏算会让「预算够用」的判断失真
+        reservedInputTokens += toolSchemaTokens(toolSpecs);
+        reservedInputTokens += TEMPLATE_OVERHEAD_TOKENS;
+
+        PromptBudget.Result result = PromptBudget.assemble(contextBudget.policy(reservedInputTokens), sections);
+        if (result.degraded()) {
+            log.warn("Planner context degraded by context budget: window={}, budget={}, used={} | {}",
+                    contextBudget.getWindowTokens(), result.budgetTokens(), result.usedTokens(), result.summary());
+        }
+        return result;
+    }
+
+    /**
+     * 工具 schema 占用的 token 估算。
+     *
+     * <p>预算预留与「估算 vs 真实」偏差统计共用同一口径——两处若各写一份，
+     * 校准出来的系数就对不上了。
+     */
+    private int toolSchemaTokens(List<ToolSpec> toolSpecs) {
+        int tokens = 0;
+        for (ToolSpec spec : toolSpecs) {
+            tokens += TokenEstimateUtils.estimate(spec.name())
+                    + TokenEstimateUtils.estimate(spec.description())
+                    + TokenEstimateUtils.estimate(String.valueOf(spec.parameters()));
+        }
+        return tokens;
     }
 
     // ------------------------------------------------------------------

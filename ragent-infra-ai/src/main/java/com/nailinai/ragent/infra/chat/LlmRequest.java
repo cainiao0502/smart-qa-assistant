@@ -45,9 +45,24 @@ public record LlmRequest(
         );
     }
 
+    /** 返回带输出上限的副本（链式：{@code LlmRequest.of(prompt).withMaxTokens(4096)}） */
+    public LlmRequest withMaxTokens(Integer maxTokens) {
+        return new LlmRequest(messages, tools, toolChoice, temperature, maxTokens);
+    }
+
     /** 携带工具声明的多轮请求 */
     public static LlmRequest withTools(List<Map<String, Object>> messages, List<ToolSpec> tools) {
         return new LlmRequest(messages, tools, "auto", null, null);
+    }
+
+    /**
+     * 携带工具声明与输出上限的多轮请求。
+     *
+     * <p>maxTokens 是失控止损闸与预算契约：上下文预算（{@code reserved-output-tokens}）
+     * 为输出预留的空间，只有请求真正带上 max_tokens 时才从假设升级为供应商强制执行的约束。
+     */
+    public static LlmRequest withTools(List<Map<String, Object>> messages, List<ToolSpec> tools, Integer maxTokens) {
+        return new LlmRequest(messages, tools, "auto", null, maxTokens);
     }
 
     public boolean hasTools() {
