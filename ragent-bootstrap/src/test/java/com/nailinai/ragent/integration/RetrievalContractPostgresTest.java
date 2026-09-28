@@ -106,9 +106,12 @@ class RetrievalContractPostgresTest {
     void querySide_shouldCapTokensAndStillExecute() {
         Long kbId = insertKbWithOneChunk("it-cap-kb", 1L, longChunkWithTailTerm());
 
+        // 查询字符从 0x6000 起：与切片的填充段（0x4E00 起的 60 字）及「量子退火」完全不相交，
+        // 截断后的 tsquery 合法执行且命中为空——既验证可执行性，也让空断言有语义。
+        // （首跑教训：从 0x4E00 起的查询与切片字符重叠，前 24 个 token 必然命中，空断言必假。）
         StringBuilder longQuery = new StringBuilder();
         for (int i = 0; i < 40; i++) {
-            longQuery.append((char) (0x4E00 + i));
+            longQuery.append((char) (0x6000 + i));
         }
         String tsQuery = KeywordTokenizer.toTsQueryOr(longQuery.toString());
         assertThat(tsQuery.split(" \\| ")).hasSize(KeywordTokenizer.MAX_QUERY_TOKENS);
