@@ -45,7 +45,10 @@ jobs:
       APP_EVAL_MIN_RECALL: ${{ vars.APP_EVAL_MIN_RECALL || '0.95' }}
       EMBEDDING_API_KEY: ${{ secrets.EMBEDDING_API_KEY }}
       SILICONFLOW_API_KEY: ${{ secrets.SILICONFLOW_API_KEY }}
-      APP_LLM_API_KEY: ${{ secrets.APP_LLM_API_KEY }}
+      # skip-rewrite=true 时评估链路不调 chat 模型，但 ChatClient 是必装 bean
+      # （InfraAiAutoConfiguration 在 chat 候选全空时抛 IllegalStateException，上下文启动失败
+      # ——首跑踩坑：进程退出 1 且评估 runner 根本没执行）。占位 key 仅用于让 bean 能装配。
+      APP_LLM_API_KEY: ${{ secrets.APP_LLM_API_KEY || 'dummy-not-used-skip-rewrite' }}
     steps:
       - uses: actions/checkout@v4
 
@@ -112,6 +115,15 @@ jobs:
           grep -E '^\[ERROR\]' eval.log | head -10 | while IFS= read -r line; do
             echo "::error title=Eval-Maven::${line:0:700}"
           done
+          # 启动失败/评估中止的原因在日志尾部（Spring 失败块、runner aborted 行），
+          # 分块转 ::error:: annotation 以便远程读取
+          python3 - <<'PY'
+          log = open('eval.log', encoding='utf-8', errors='replace').read()
+          tail = log[-5600:]
+          for i in range(0, len(tail), 690):
+              chunk = tail[i:i+690].replace('\n', ' | ')
+              print(f"::error title=Eval-tail-{i//690}::{chunk}")
+          PY
 
       - name: Upload eval log
         if: always()
