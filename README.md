@@ -155,11 +155,17 @@ docker compose up -d --build
 
 #### 2️⃣ 初始化数据库
 
+`database.sql` 只建扩展与表、**不建库**——它同时被 Testcontainers 集成测试当作 PG 官方的
+initdb 脚本加载（`/docker-entrypoint-initdb.d/`），必须保持「纯 SQL、不含 psql 元命令」。
+所以先创建数据库，再执行建表脚本：
+
 ```bash
+# 1) 创建数据库（若已存在会报错，忽略即可）
+psql -U postgres -c "CREATE DATABASE ragent"
+
+# 2) 建扩展 + 建表（知识库/文档/切片/会话/Agent 运行/任务/用户 8 张表）
 psql -U postgres -d ragent -f database.sql
 ```
-
-（脚本包含知识库/文档/切片/会话/Agent 运行/任务/用户 8 张表）
 
 #### 3️⃣ 配置环境变量
 在项目根目录复制模板：

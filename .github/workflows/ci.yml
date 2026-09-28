@@ -26,6 +26,19 @@ jobs:
           # tee 会吃掉退出码，用 PIPESTATUS 取 mvn 的真实退出码
           test ${PIPESTATUS[0]} -eq 0
 
+      # 测试摘要以 ::notice:: annotation 输出（成功时也执行）：
+      # Skipped 数尤其关键——本地无 Docker 时 Testcontainers 契约测试会被整类跳过，
+      # 只有看到 Skipped=0 才能远程确认 S0-① / S1 的 SQL 层回归真的在 CI 上跑过。
+      # 与下面的失败诊断同理，notice 在公开仓库的 check-run annotations API 上免认证可读。
+      - name: Test summary
+        if: always()
+        run: |
+          DIR=ragent-bootstrap/target/surefire-reports
+          [ -d "$DIR" ] || { echo "no surefire reports"; exit 0; }
+          sum() { grep -hoE "$1=\"[0-9]+\"" "$DIR"/*.xml | grep -oE '[0-9]+' | awk '{n+=$1} END{print n+0}'; }
+          T=$(sum tests); F=$(sum failures); E=$(sum errors); S=$(sum skipped)
+          echo "::notice title=Surefire summary::Tests run: $T, Failures: $F, Errors: $E, Skipped: $S"
+
       # 失败诊断以 ::error:: annotation 形式输出：surefire 失败块与 Maven 错误行
       # 在公开仓库的 check-run annotations API 上可免认证读取，CI 故障可远程定位
       - name: Failure diagnostics

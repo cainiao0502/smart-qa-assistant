@@ -5,7 +5,8 @@
 #   Secrets: EMBEDDING_API_KEY（必填，缺省时任务告警跳过而非失败——PR 流程不被阻塞）
 #            SILICONFLOW_API_KEY（可选，embedding 备用供应商）
 #            APP_LLM_API_KEY（可选，跑含改写的全量消融列时需要；默认 skip-rewrite=true 不需要）
-#   Variables: APP_EVAL_MIN_RECALL（门禁阈值，参考基线 0.969，建议 0.95）
+#   Variables: APP_EVAL_MIN_RECALL（门禁阈值。2026-09-28 复测基线 = 1.000（32/32，kbId=2，
+#              S0-①②/B1/C2 修复后）；建议 0.95。⚠️ 设 0.5 等于「召回掉一半也算过」）
 #
 # 手动触发：Actions → Eval gate → Run workflow。日常由 schedule 每晚跑一次。
 

@@ -144,9 +144,12 @@ app:
     # trigger-chars 管「步骤观察总量」何时摘要，这里管单条观察/历史/切片进入视图的上限）。
     # 注意 retrieval-chunks 与 app.rag.top-k 的联动：调大 top-k 而不动这里，Planner 仍只看前 N 条
     planner:
-      step-observation-chars: 800   # 单条步骤观察截断，<=0 不裁剪
-      retrieval-chunks: 4           # Planner 可见的检索切片上限，<=0 跟随 top-k
-      history-messages: 4           # Planner 可见的最近历史条数，<=0 不限
+      # <=0：不按字符裁剪，但仍受 15 行上限约束（truncateHead(obs, MAX_VALUE, 15)）
+      step-observation-chars: 800
+      # <=0：不额外裁剪，用调用方传入的全部切片（注意不等于 app.rag.top-k）
+      retrieval-chunks: 4
+      # <=0：不限
+      history-messages: 4
     compaction:
       # 参考 pi harness/compaction：步骤观察总量超过阈值时，把早期步骤摘要成一条
       # 结构化记录（最近 N 步与 plan 步骤保留原文），Planner 视图不再随步数线性膨胀。
@@ -226,7 +229,10 @@ app:
     # chat 供应商不可用/余额耗尽时开启，只跑 noRewrite / minimal / 阈值三列
     skip-rewrite: ${APP_EVAL_SKIP_REWRITE:false}
     # 评估门禁（CI 用）：>0 时基线 recall 低于该值 → 启动失败（非零退出码）。
-    # 基线取自 cc09b8f 消融记录（0.969）；本地标定用 0，CI 里按 vars.APP_EVAL_MIN_RECALL 配
+    # 基线 2026-09-28 CI 复测 = 1.000（32/32，kbId=2，启发式重排，S0-①②/B1/C2 修复后）；
+    # 修复前 cc09b8f 记录为 0.969（无重排）/ 0.906（启发式）。
+    # ⚠️ CI 侧 vars.APP_EVAL_MIN_RECALL 应设 0.95：设 0.5 等于「召回掉一半也算过」，门禁形同虚设。
+    # 本地标定用 0（默认关闭）。
     min-recall: ${APP_EVAL_MIN_RECALL:0.0}
     # 评估（含门禁）结束后退出进程——CI 门禁模式必须开，否则应用照常挂起直到任务超时
     exit-after-run: ${APP_EVAL_EXIT_AFTER_RUN:false}
