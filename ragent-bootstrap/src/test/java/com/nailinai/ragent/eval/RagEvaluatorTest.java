@@ -6,6 +6,8 @@ import com.nailinai.ragent.chat.retrieve.SearchResult;
 import com.nailinai.ragent.entity.DocumentChunk;
 import com.nailinai.ragent.infra.chat.ChatClient;
 import com.nailinai.ragent.infra.embedding.EmbeddingClient;
+import com.nailinai.ragent.user.context.UserIdHolder;
+import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
@@ -18,6 +20,7 @@ import org.mockito.quality.Strictness;
 import java.util.List;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.Mockito.when;
@@ -42,8 +45,16 @@ class RagEvaluatorTest {
 
     @BeforeEach
     void setUp() {
+        // 评估链路走真实 RetrievalServiceImpl：ownerUserId 已 fail-closed，
+        // 单测里模拟离线路径的显式绑定（对应生产中 RagEvaluationRunner 解析库 owner 后的绑定）
+        UserIdHolder.set(1L);
         when(embeddingClient.embed(anyString())).thenReturn(List.of(0.1f));
         when(dummyChannel.name()).thenReturn("vector");
+    }
+
+    @AfterEach
+    void tearDown() {
+        UserIdHolder.clear();
     }
 
     @Test
@@ -143,6 +154,46 @@ class RagEvaluatorTest {
         assertThat(report.summary().hitCount()).isEqualTo(1);
         assertThat(report.summary().expectedCount()).isEqualTo(2);
         assertThat(report.summary().recallAtK()).isEqualTo(0.5);
+    }
+
+    @Test
+    @DisplayName("连续失败达到上限：抛 EvaluationAbortedException 中止整轮（防止系统性故障伪装成召回全零）")
+    void consecutiveFailures_shouldAbortWholeRound() {
+        // embedding 是单条查询路径上最靠前的基础设施依赖：它抛出才会绕过
+        // MultiChannelRetriever 的通道隔离，进入 evaluate 的逐条容错
+        when(embeddingClient.embed(anyString())).thenThrow(new RuntimeException("kb not found"));
+        RagEvaluator evaluator = new RagEvaluator(embeddingClient, chatClient, List.of(dummyChannel), List.of(new DedupPostProcessor()));
+        evaluator.setMaxConsecutiveFailures(2);
+
+        RagEvaluationSet set = new RagEvaluationSet(1L, 4, List.of(
+                new RagEvaluationQuery("问题1", List.of("aaa.txt"), null),
+                new RagEvaluationQuery("问题2", List.of("aaa.txt"), null),
+                new RagEvaluationQuery("问题3", List.of("aaa.txt"), null)));
+
+        assertThatThrownBy(() -> evaluator.evaluate(set, false, true))
+                .isInstanceOf(EvaluationAbortedException.class)
+                .hasMessageContaining("系统性故障");
+    }
+
+    @Test
+    @DisplayName("零星失败未达连续上限：只跳过失败条，评估继续")
+    void scatteredFailures_shouldNotAbort() {
+        when(embeddingClient.embed(anyString()))
+                .thenThrow(new RuntimeException("供应商抖动"))
+                .thenReturn(List.of(0.1f))
+                .thenThrow(new RuntimeException("供应商抖动"))
+                .thenReturn(List.of(0.1f));
+        RagEvaluator evaluator = new RagEvaluator(embeddingClient, chatClient, List.of(dummyChannel), List.of(new DedupPostProcessor()));
+        evaluator.setMaxConsecutiveFailures(2);
+
+        RagEvaluationSet set = new RagEvaluationSet(1L, 4, List.of(
+                new RagEvaluationQuery("问题1", List.of("aaa.txt"), null),
+                new RagEvaluationQuery("问题2", List.of("aaa.txt"), null),
+                new RagEvaluationQuery("问题3", List.of("aaa.txt"), null),
+                new RagEvaluationQuery("问题4", List.of("aaa.txt"), null)));
+        EvaluationReport report = evaluator.evaluate(set, false, true);
+
+        assertThat(report.queries()).hasSize(2);
     }
 
     private SearchResult result(String documentName) {

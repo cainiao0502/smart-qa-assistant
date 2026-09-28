@@ -14,6 +14,8 @@ import com.nailinai.ragent.dto.response.RetrievalResult;
 import com.nailinai.ragent.entity.DocumentChunk;
 import com.nailinai.ragent.infra.chat.ChatClient;
 import com.nailinai.ragent.infra.embedding.EmbeddingClient;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Component;
 
 import java.util.ArrayList;
@@ -46,6 +48,13 @@ public class RagEvaluator {
      */
     private final List<SearchPostProcessor> productionProcessors;
 
+    /**
+     * 连续失败条数达到该值即判定为系统性故障（权限/配置/网络断链），中止整轮评估。
+     * 单条失败是供应商抖动，只跳过该条；连续失败被逐条吞掉会让报告呈现为
+     * 「召回全零」——09-16 教训：权限拦截被误读成检索能力崩塌。
+     */
+    private int maxConsecutiveFailures = 3;
+
     public RagEvaluator(EmbeddingClient embeddingClient,
                         ChatClient chatClient,
                         List<SearchChannel> channels,
@@ -54,6 +63,12 @@ public class RagEvaluator {
         this.chatClient = chatClient;
         this.channels = channels;
         this.productionProcessors = productionProcessors == null ? List.of() : List.copyOf(productionProcessors);
+    }
+
+    @Autowired
+    public void setMaxConsecutiveFailures(
+            @Value("${app.eval.max-consecutive-failures:3}") int maxConsecutiveFailures) {
+        this.maxConsecutiveFailures = Math.max(1, maxConsecutiveFailures);
     }
 
     /**
@@ -80,12 +95,21 @@ public class RagEvaluator {
         RetrievalService service = buildRetrievalService(queryRewriteEnabled, rerankEnabled);
         double threshold = Math.max(0.0, Math.min(1.0, scoreThreshold));
         List<QueryEvaluation> queryResults = new ArrayList<>();
+        int consecutiveFailures = 0;
         for (RagEvaluationQuery query : set.queries()) {
             try {
                 queryResults.add(evaluateQuery(service, set, query, threshold));
+                consecutiveFailures = 0;
             } catch (RuntimeException ex) {
                 // 单条查询的基础设施故障（embedding 供应商偶发失败）只放弃该条，
                 // 不让整轮评估作废——真实供应商总会有抖动
+                consecutiveFailures++;
+                if (consecutiveFailures >= maxConsecutiveFailures) {
+                    throw new EvaluationAbortedException("连续 " + consecutiveFailures
+                            + " 条查询失败，判定为系统性故障而非供应商抖动，中止整轮评估"
+                            + "（避免权限/配置类故障被逐条吞掉后伪装成「召回全零」）。"
+                            + "最后一条失败原因: " + query.question() + " | " + ex.getMessage());
+                }
                 log.warn("evaluation query failed, skipped: {} | {}", query.question(), ex.getMessage());
             }
         }
