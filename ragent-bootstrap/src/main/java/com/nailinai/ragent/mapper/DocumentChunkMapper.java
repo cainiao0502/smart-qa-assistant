@@ -71,12 +71,12 @@ public interface DocumentChunkMapper {
             FROM document_chunk dc
             INNER JOIN document d ON d.id = dc.doc_id
             WHERE dc.kb_id = #{kbId}
-            <if test="ownerUserId != null">
-                AND EXISTS (
-                    SELECT 1 FROM knowledge_base kb
-                    WHERE kb.id = dc.kb_id AND kb.owner_user_id = #{ownerUserId}
-                )
-            </if>
+            <!-- 归属过滤恒生效（fail-closed）：ownerUserId 由 SearchRequest.of 保证非空，
+                 不再允许 null 跳过过滤——那会把身份传播断链静默降级为跨租户读取 -->
+            AND EXISTS (
+                SELECT 1 FROM knowledge_base kb
+                WHERE kb.id = dc.kb_id AND kb.owner_user_id = #{ownerUserId}
+            )
             <if test="documentIds != null and documentIds.size() > 0">
                 AND dc.doc_id IN
                 <foreach collection="documentIds" item="docId" open="(" separator="," close=")">
@@ -122,12 +122,11 @@ public interface DocumentChunkMapper {
             INNER JOIN document d ON d.id = dc.doc_id
             WHERE dc.kb_id = #{kbId}
               AND dc.tsv @@ to_tsquery('simple', #{tsQuery})
-            <if test="ownerUserId != null">
-                AND EXISTS (
-                    SELECT 1 FROM knowledge_base kb
-                    WHERE kb.id = dc.kb_id AND kb.owner_user_id = #{ownerUserId}
-                )
-            </if>
+            <!-- 归属过滤恒生效（fail-closed），同 selectTopKByKbId -->
+            AND EXISTS (
+                SELECT 1 FROM knowledge_base kb
+                WHERE kb.id = dc.kb_id AND kb.owner_user_id = #{ownerUserId}
+            )
             <if test="documentIds != null and documentIds.size() &gt; 0">
                 AND dc.doc_id IN
                 <foreach collection="documentIds" item="docId" open="(" separator="," close=")">

@@ -37,7 +37,7 @@ class MultiChannelRetrieverTest {
 
         MultiChannelRetriever retriever = new MultiChannelRetriever(List.of(keyword, vector), List.of(processor));
 
-        SearchRequest request = SearchRequest.of(1L, "问题", null, 4, null, null, null, null);
+        SearchRequest request = SearchRequest.of(1L, "问题", null, 4, null, null, null, 1L);
         List<SearchResult> results = retriever.retrieve(request, SearchContext.of("问题", "问题", 4, 0.4));
 
         assertThat(results).hasSize(3);
@@ -60,7 +60,7 @@ class MultiChannelRetrieverTest {
         MultiChannelRetriever retriever = new MultiChannelRetriever(List.of(broken, healthy), List.of(processor));
 
         List<SearchResult> results = retriever.retrieve(
-                SearchRequest.of(1L, "问题", null, 4, null, null, null, null),
+                SearchRequest.of(1L, "问题", null, 4, null, null, null, 1L),
                 SearchContext.of("问题", "问题", 4, 0.4));
 
         assertThat(results).hasSize(1);
@@ -85,7 +85,7 @@ class MultiChannelRetrieverTest {
                 List.of(channel), List.of(first, second));
 
         retriever.retrieve(
-                SearchRequest.of(1L, "问题", null, 4, null, null, null, null),
+                SearchRequest.of(1L, "问题", null, 4, null, null, null, 1L),
                 SearchContext.of("问题", "问题", 4, 0.4));
 
         InOrder inOrder = inOrder(second, first);
@@ -105,7 +105,7 @@ class MultiChannelRetrieverTest {
         MultiChannelRetriever retriever = new MultiChannelRetriever(List.of(channel), List.of(processor));
 
         List<SearchResult> results = retriever.retrieve(
-                SearchRequest.of(1L, "问题", null, 4, null, null, null, null),
+                SearchRequest.of(1L, "问题", null, 4, null, null, null, 1L),
                 SearchContext.of("问题", "问题", 4, 0.4));
 
         assertThat(results).isEmpty();
@@ -122,7 +122,7 @@ class MultiChannelRetrieverTest {
         MultiChannelRetriever retriever = new MultiChannelRetriever(List.of(empty), List.of(processor));
 
         List<SearchResult> results = retriever.retrieve(
-                SearchRequest.of(1L, "问题", null, 4, null, null, null, null),
+                SearchRequest.of(1L, "问题", null, 4, null, null, null, 1L),
                 SearchContext.of("问题", "问题", 4, 0.4));
 
         assertThat(results).isEmpty();
@@ -145,7 +145,7 @@ class MultiChannelRetrieverTest {
 
         List<ChannelStatus> statusSink = new java.util.ArrayList<>();
         retriever.retrieve(
-                SearchRequest.of(1L, "问题", null, 4, null, null, null, null),
+                SearchRequest.of(1L, "问题", null, 4, null, null, null, 1L),
                 SearchContext.of("问题", "问题", 4, 0.4),
                 statusSink);
 
@@ -171,7 +171,7 @@ class MultiChannelRetrieverTest {
         when(processor.process(anyList(), any())).thenAnswer(invocation -> invocation.getArgument(0));
 
         MultiChannelRetriever retriever = new MultiChannelRetriever(List.of(flaky), List.of(processor));
-        SearchRequest request = SearchRequest.of(1L, "问题", null, 4, null, null, null, null);
+        SearchRequest request = SearchRequest.of(1L, "问题", null, 4, null, null, null, 1L);
         SearchContext context = SearchContext.of("问题", "问题", 4, 0.4);
 
         List<ChannelStatus> firstRun = new java.util.ArrayList<>();
