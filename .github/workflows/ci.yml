@@ -21,7 +21,30 @@ jobs:
           cache: maven
 
       - name: Build & test
-        run: mvn -B -pl ragent-bootstrap -am test
+        run: |
+          mvn -B -pl ragent-bootstrap -am test 2>&1 | tee mvn.log
+          # tee 会吃掉退出码，用 PIPESTATUS 取 mvn 的真实退出码
+          test ${PIPESTATUS[0]} -eq 0
+
+      # 失败诊断以 ::error:: annotation 形式输出：surefire 失败块与 Maven 错误行
+      # 在公开仓库的 check-run annotations API 上可免认证读取，CI 故障可远程定位
+      - name: Failure diagnostics
+        if: failure()
+        run: |
+          DIR=ragent-bootstrap/target/surefire-reports
+          if [ -d "$DIR" ]; then
+            for f in "$DIR"/*.txt; do
+              grep -qE '<<< (FAILURE|ERROR)!' "$f" || continue
+              cls=$(basename "$f" .txt)
+              msg=$(grep -A 18 -E '<<< (FAILURE|ERROR)!' "$f" | tr '\n' ' ' | head -c 700)
+              echo "::error title=Surefire: $cls::$msg"
+            done
+          fi
+          if [ -f mvn.log ]; then
+            grep -E '^\[ERROR\]' mvn.log | head -12 | while IFS= read -r line; do
+              echo "::error title=Maven::${line:0:700}"
+            done
+          fi
 
   frontend:
     name: Frontend build (Node 20)
