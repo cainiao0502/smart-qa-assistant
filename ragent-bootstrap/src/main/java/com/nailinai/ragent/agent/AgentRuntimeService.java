@@ -711,7 +711,23 @@ public class AgentRuntimeService {
      * 把失败归类为 {@code ToolFailureType.TIMEOUT}，从而给模型「缩小范围重试」的正确引导。
      */
     private <T> T callWithTimeout(long timeoutMs, String what, Supplier<T> task) {
-        Future<T> future = timeoutExecutor.submit(task::get);
+        // 虚拟线程**不继承**父线程的 ThreadLocal：必须显式把归属用户带进执行线程，
+        // 否则工具内的 UserIdHolder.get() 返回 null，撞上 SearchRequest.of 的
+        // fail-closed 校验（2026-09-28 真机复现：agent_step 两条 kb_lookup 均 FAILED，
+        // cause = ownerUserId is required for retrieval，整轮 Agent 检索等于不可用）。
+        // 取值必须在**当前线程**完成——get() 优先读显式绑定、回退 Sa-Token 上下文，
+        // 到了工作线程里这两条路都会断。
+        // 反向验证过：临时回滚此改动，AgentRuntimeServiceTest 的
+        // callWithTimeout_shouldCarryUserIdIntoWorkerThread 立即以 "but was: null" 失败。
+        Long ownerUserId = UserIdHolder.get();
+        Future<T> future = timeoutExecutor.submit(() -> {
+            UserIdHolder.set(ownerUserId);
+            try {
+                return task.get();
+            } finally {
+                UserIdHolder.clear();
+            }
+        });
         try {
             return future.get(timeoutMs, TimeUnit.MILLISECONDS);
         } catch (TimeoutException ex) {
@@ -742,31 +758,33 @@ public class AgentRuntimeService {
         if (!decision.shouldFinish() && !decision.shouldRespondWithGap()) {
             return false;
         }
-        // 已有成功的工具调用，说明本轮确实取得了进展，此时应信任模型的收尾判断。
-        //
-        // 否则会误伤：任务完成度依赖「模型是否切换到下一个任务」（见 extractCompletedTaskKeys），
-        // 而模型完全可能始终停留在同一个任务上把事情做完，于是一个任务都不会被标记为完成，
-        // 导致「工具全部执行成功、答案也正确」的一轮被反复拦下，最终强行降级为 respond_with_gap。
-        if (hasAnySuccessfulToolCall(steps)) {
-            return false;
-        }
+        // 守卫按 taskKey 逐任务判定进展（A1）。旧实现「任一次成功工具调用」即短路整个守卫：
+        // 任务 1 成功后跳过任务 2..N 直接收尾不再被拦，守卫基本失效。
+        // 现在只有「该任务自己没有任何成功工具活动」才构成过早收尾——
+        // 同时避免另一方向的误伤：模型始终停留在同一任务上把它做完
+        // （completedTaskKeys 依赖任务切换标记，可能一个任务都没标完成），
+        // 该任务的成功工具活动使其不被拦截，收尾判断仍被信任。
         for (int index = 0; index < activePlan.size() - 1; index++) {
             AgentPlanItem task = activePlan.get(index);
-            if (task != null && StringUtils.hasText(task.getKey()) && !completedTaskKeys.contains(task.getKey())) {
+            if (task == null || !StringUtils.hasText(task.getKey()) || completedTaskKeys.contains(task.getKey())) {
+                continue;
+            }
+            if (!hasSuccessfulToolActivity(steps, task.getKey())) {
                 return true;
             }
         }
         return false;
     }
 
-    /** 历史步骤中是否存在成功的工具调用 */
-    private boolean hasAnySuccessfulToolCall(List<AgentStep> steps) {
-        if (steps == null || steps.isEmpty()) {
+    /** 指定任务名下是否存在成功的工具调用（按步骤 arguments.taskKey 归属，而非全局任一成功） */
+    private boolean hasSuccessfulToolActivity(List<AgentStep> steps, String taskKey) {
+        if (steps == null || steps.isEmpty() || !StringUtils.hasText(taskKey)) {
             return false;
         }
         return steps.stream().anyMatch(step -> step != null
                 && "tool_call".equalsIgnoreCase(step.getStepType())
-                && "SUCCESS".equalsIgnoreCase(step.getStatus()));
+                && "SUCCESS".equalsIgnoreCase(step.getStatus())
+                && taskKey.equals(step.getArguments() == null ? null : step.getArguments().get("taskKey")));
     }
 
     private String resolveTerminalTaskKey(List<AgentPlanItem> activePlan, String fallbackTaskKey) {

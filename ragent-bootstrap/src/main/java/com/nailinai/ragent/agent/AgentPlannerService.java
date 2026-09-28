@@ -20,6 +20,7 @@ import com.nailinai.ragent.util.PromptBudget;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 import org.springframework.util.StringUtils;
 
@@ -57,19 +58,20 @@ public class AgentPlannerService {
     /** 控制类工具：结束本轮并进入最终回答 */
     static final String TOOL_FINISH = "finish";
 
-    /** planner 上下文里单条历史步骤 observation 的字符上限（工具层给全量，上下文层负责裁剪） */
-    private static final int STEP_OBSERVATION_CONTEXT_CHARS = 800;
+    /** planner 上下文里单条历史步骤 observation 的字符上限（工具层给全量，上下文层负责裁剪）；<=0 不裁剪 */
+    private int stepObservationContextChars = 800;
 
     /**
-     * planner 上下文里检索切片的最大条数。
+     * planner 上下文里检索切片的最大条数；<=0 不限（跟随 {@code app.rag.top-k}）。
      *
      * <p>这是「条目级」上限，与 {@code app.rag.top-k}（回答链路的条数）刻意解耦：
-     * planner 只需要够判断的信息，不需要看到全部切片。改 top-k 不会连带影响这里。
+     * planner 只需要够判断的信息，不需要看到全部切片。但两者必须一起调——
+     * 调大 top-k 而不动这里，Planner 仍只看到前 N 条，调试时会误以为检索没生效（A2）。
      */
-    private static final int MAX_RETRIEVAL_CHUNKS = 4;
+    private int maxRetrievalChunks = 4;
 
-    /** planner 上下文取用的最近历史消息条数 */
-    private static final int MAX_HISTORY_MESSAGES = 4;
+    /** planner 上下文取用的最近历史消息条数；<=0 不限 */
+    private int maxHistoryMessages = 4;
 
     /** planner 提示词模板固定文字的 token 预留（分节标签等） */
     private static final int TEMPLATE_OVERHEAD_TOKENS = 300;
@@ -121,6 +123,21 @@ public class AgentPlannerService {
     @Autowired(required = false)
     public void setContextBudget(ContextBudgetProperties contextBudget) {
         this.contextBudget = contextBudget;
+    }
+
+    /**
+     * Planner 上下文视图的三个口径（A2）：此前硬编码 800 字 / 4 条历史 / 4 个切片，
+     * 与 compaction 的 trigger-chars（总量口径）各管一段互不感知，调 top-k 时尤易迷惑。
+     * 以 setter 注入并允许缺省：单元测试直接 new 时按类内默认值工作。
+     */
+    @Autowired(required = false)
+    public void setPlannerViewLimits(
+            @Value("${app.agent.planner.step-observation-chars:800}") int stepObservationChars,
+            @Value("${app.agent.planner.retrieval-chunks:4}") int retrievalChunks,
+            @Value("${app.agent.planner.history-messages:4}") int historyMessages) {
+        this.stepObservationContextChars = stepObservationChars;
+        this.maxRetrievalChunks = retrievalChunks;
+        this.maxHistoryMessages = historyMessages;
     }
 
     public PlannerDecision decide(ChatRequest request,
@@ -465,14 +482,16 @@ public class AgentPlannerService {
                                      List<AgentStep> priorSteps,
                                      String systemPrompt,
                                      List<ToolSpec> toolSpecs) {
+        int historyLimit = maxHistoryMessages > 0 ? maxHistoryMessages : history.size();
         String historyText = history.stream()
-                .skip(Math.max(0, history.size() - MAX_HISTORY_MESSAGES))
+                .skip(Math.max(0, history.size() - historyLimit))
                 .map(message -> message.getRole() + ": " + message.getContent())
                 .collect(Collectors.joining("\n"));
 
         // 一片一个段落：超限时丢的是整片引用，而不是把某个切片从中间切断
+        int chunkLimit = maxRetrievalChunks > 0 ? maxRetrievalChunks : chunks.size();
         List<String> chunkBlocks = chunks.stream()
-                .limit(MAX_RETRIEVAL_CHUNKS)
+                .limit(chunkLimit)
                 .map(chunk -> {
                     String source = chunk.getDocumentName() == null ? "unknown" : chunk.getDocumentName();
                     return "[%s#%s] %s".formatted(source, chunk.getChunkIndex(), chunk.getChunkText());
@@ -841,7 +860,8 @@ public class AgentPlannerService {
      * 原样累积，多步之后 prompt 会迅速膨胀。裁剪发生在上下文层，而不是让工具层预先丢信息。
      */
     private String truncateForContext(String observation) {
-        return TextTruncator.truncateHead(observation, STEP_OBSERVATION_CONTEXT_CHARS, 15).content();
+        int limit = stepObservationContextChars > 0 ? stepObservationContextChars : Integer.MAX_VALUE;
+        return TextTruncator.truncateHead(observation, limit, 15).content();
     }
 
     private String blankAs(String value, String fallback) {

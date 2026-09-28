@@ -14,16 +14,19 @@ import com.nailinai.ragent.entity.DocumentChunk;
 import com.nailinai.ragent.framework.common.BusinessException;
 import com.nailinai.ragent.framework.common.ErrorCode;
 import com.nailinai.ragent.infra.chat.ToolSpec;
+import com.nailinai.ragent.user.context.UserIdHolder;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
+import org.springframework.test.util.ReflectionTestUtils;
 
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.function.Supplier;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
@@ -54,6 +57,25 @@ class AgentRuntimeServiceTest {
     @BeforeEach
     void setUp() {
         service = new AgentRuntimeService(agentPlannerService, toolExecutorRegistry, agentRunStore, 6, 30000, 60000);
+    }
+
+    @Test
+    @DisplayName("工具执行线程必须继承归属用户：UserIdHolder 是 ThreadLocal，虚拟线程不继承它")
+    void callWithTimeout_shouldCarryUserIdIntoWorkerThread() {
+        // 2026-09-28 真机回归：kb_lookup 在 timeoutExecutor 的虚拟线程里执行时
+        // UserIdHolder.get() 返回 null，撞上 SearchRequest.of 的 fail-closed 校验，
+        // 整轮 Agent 检索全部失败（agent_step 记录 cause = ownerUserId is required）。
+        // 本用例锁死「归属用户必须被带进工作线程」这条性质。
+        UserIdHolder.set(42L);
+        try {
+            Object carried = ReflectionTestUtils.invokeMethod(
+                    service, "callWithTimeout", 5_000L, "probe", (Supplier<Object>) UserIdHolder::get);
+            assertThat(carried)
+                    .as("工作线程内必须能读到归属用户，否则工具侧检索会被 fail-closed 拒绝")
+                    .isEqualTo(42L);
+        } finally {
+            UserIdHolder.clear();
+        }
     }
 
     @Test
@@ -213,6 +235,30 @@ class AgentRuntimeServiceTest {
         // 非最终任务未完成时不允许 finish，兜底转为 respond_with_gap
         assertThat(result.getAnswerMode()).isEqualTo("respond_with_gap");
         assertThat(result.getRun().getStatus()).isEqualTo("SUCCESS");
+    }
+
+    @Test
+    @DisplayName("A1 回归：任务1成功后跳过任务2直接 finish——守卫按 taskKey 判定，不被「任一成功调用」短路")
+    void guard_shouldNotBeBypassedByUnrelatedSuccessfulToolCall() {
+        // task_1 真实执行成功；随后模型无视未执行的 task_2 直接收尾。
+        // 旧实现：任一成功工具调用即放行 finish（守卫失效）；
+        // 新实现：task_2 名下没有任何成功工具活动，finish 被拦、强制转为信息缺口。
+        PlannerDecision toolOnTask1 = toolCallDecision("task_1", "kb_lookup", Map.of("query", "问题"));
+        toolOnTask1.setPlan(planOf("task_1", "task_2", "task_final"));
+        PlannerDecision prematureFinish = finishDecision("task_final", "提前结束",
+                planOf("task_1", "task_2", "task_final"));
+        when(agentPlannerService.decide(any(), any(), any(), anyList()))
+                .thenReturn(toolOnTask1, prematureFinish);
+
+        ToolExecutor executor = mock(ToolExecutor.class);
+        when(executor.getToolName()).thenReturn("kb_lookup");
+        when(executor.execute(anyMap(), any())).thenReturn(
+                ToolExecutionResult.builder().summary("ok").build());
+        when(toolExecutorRegistry.getRequired("kb_lookup")).thenReturn(executor);
+
+        AgentRuntimeResult result = service.run(buildRequest(), List.of(), buildRetrievalResult());
+
+        assertThat(result.getAnswerMode()).isEqualTo("respond_with_gap");
     }
 
     @Test
