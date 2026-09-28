@@ -82,11 +82,36 @@ jobs:
       - name: Run evaluation (boot app; eval runner exits the process when done)
         if: env.EMBEDDING_API_KEY != '' || env.SILICONFLOW_API_KEY != ''
         run: |
-          mvn -B -pl ragent-bootstrap -am spring-boot:run \
+          # spring-boot:run 的 goal 会应用到 reactor 全部模块：parent 上没有 mainClass 直接失败
+          # （首跑踩坑）。先 install 兄弟模块到 ~/.m2，再只对 ragent-bootstrap 单模块 run。
+          mvn -B -pl ragent-bootstrap -am install -DskipTests
+          mvn -B -pl ragent-bootstrap spring-boot:run \
             -Dspring-boot.run.jvmArguments="-Dspring.main.web-application-type=none" \
             2>&1 | tee eval.log
-          # min-recall 门禁失败 / 连续失败 tripwire 都会让进程非零退出，管道右侧 tee 会吃掉退出码
-          test ${PIPESTATUS[0]} -eq 0
+          MVN=${PIPESTATUS[0]}
+          # tee 吃掉退出码，用 PIPESTATUS 取 mvn 的真实退出码：
+          # 门禁阈值失败 / tripwire 中止都经启动失败或非零应用退出落到这里
+          test $MVN -eq 0
+          # 双保险：即便 run goal 不传播应用退出码，「评估跑完」的标志行必须存在
+          grep -q "RAG evaluation finished" eval.log
+
+      # 消融汇总以 notice annotation 输出：公开仓库的 annotations API 可免认证读取，
+      # 评估结果（recall/precision 数字）可远程获取，不必等日志粘贴
+      - name: Publish ablation summaries
+        if: always()
+        run: |
+          [ -f eval.log ] || exit 0
+          grep -E 'ablation|评估门禁|RAG evaluation aborted' eval.log | head -20 | while IFS= read -r line; do
+            echo "::notice title=Eval::${line:0:500}"
+          done
+
+      - name: Failure diagnostics
+        if: failure()
+        run: |
+          [ -f eval.log ] || exit 0
+          grep -E '^\[ERROR\]' eval.log | head -10 | while IFS= read -r line; do
+            echo "::error title=Eval-Maven::${line:0:700}"
+          done
 
       - name: Upload eval log
         if: always()
