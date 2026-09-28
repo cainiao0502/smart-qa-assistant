@@ -43,6 +43,9 @@ jobs:
       APP_EVAL_EXIT_AFTER_RUN: "true"
       APP_EVAL_SKIP_REWRITE: "true"
       APP_EVAL_MIN_RECALL: ${{ vars.APP_EVAL_MIN_RECALL || '0.95' }}
+      # spring-boot:run 的工作目录默认是模块 basedir（ragent-bootstrap，见启动日志
+      # "started by runner in .../ragent-bootstrap"），评估集在仓库根的 data/eval/，需上跳一级
+      APP_EVAL_SET_PATH: ../data/eval/eval-set.json
       EMBEDDING_API_KEY: ${{ secrets.EMBEDDING_API_KEY }}
       SILICONFLOW_API_KEY: ${{ secrets.SILICONFLOW_API_KEY }}
       # skip-rewrite=true 时评估链路不调 chat 模型，但 ChatClient 是必装 bean
