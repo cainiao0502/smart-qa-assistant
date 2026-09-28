@@ -18,9 +18,9 @@ import java.util.Map;
  *
  * <p>顺序假设：本处理器位于 DedupPostProcessor(100) 之后（order 150），
  * 输入已按分数降序排列——逐条扫描时先到先得，同文档只保留排名最高的前 N 席。
- * 位于 RerankPostProcessor(200) 之前意味着：重排开启时重排会按 rerankScore
- * 重新排序并截断 top-k，本处理器的多样性效果可能被重排覆盖（重排路径的多样性
- * 由重排模型自身的相关性判断保证）；重排关闭时本处理器的席位约束直接生效。</p>
+ * 位于 RerankPostProcessor(200) 之前：重排会按 rerankScore 重新排序，但不会把
+ * 本处理器删掉的候选加回来，故席位约束在重排开/关两条路径上都直接生效。
+ * （C2 之后 top-k 截断已移至链末位的 ThresholdFilterPostProcessor，重排不再截断。）</p>
  *
  * <p>{@code maxPerDoc <= 0} 时直通（默认关闭，由 app.rag.diversity.max-per-doc 控制）。</p>
  */

@@ -90,8 +90,10 @@ public class RetrievalServiceImpl implements RetrievalService {
                 request.getDocumentIds(),
                 request.getFileTypes(),
                 request.getDocumentNameKeyword(),
-                // 归属过滤：只允许检索当前用户自己的知识库。取值走 UserIdHolder——
-                // 检索可能运行在异步线程（agent 循环）里，直接读 Sa-Token 的 ThreadLocal 会失败。
+                // 归属过滤（fail-closed）：只允许检索 owner 的知识库，null 在 SearchRequest.of 处
+                // fail-fast。取值走 UserIdHolder——检索可能运行在异步线程（agent 循环）里，
+                // 直接读 Sa-Token 的 ThreadLocal 会失败；chat 链路由 ChatController 按
+                // capture/set/clear 三步约定传播，评估/管理调试路径显式绑定库 owner。
                 UserIdHolder.get()
         );
 
@@ -109,13 +111,12 @@ public class RetrievalServiceImpl implements RetrievalService {
                 .map(ChannelStatus::channel)
                 .toList();
 
-        // 阈值过滤放在多通道融合之后、作用于排序用的归一化分数，向量与关键词一视同仁：
-        // - 重排开启时用 rerankScore（语义相对分与词法命中率的加权混合，∈[0,1]）；
-        // - 重排关闭时退化为通道内归一化的 rawScore（向量通道=cosine 相似度，
-        //   关键词通道=命中数/最大命中数的分数归一，并非排名归一）。
-        // 旧实现只看 chunk.getScore()（仅向量 SQL 赋值），关键词通道结果恒通过，阈值形同虚设。
+        // 阈值过滤由 ThresholdFilterPostProcessor（order 300，处理器链末位）完成，
+        // 并按证据量纲分开标定：有向量证据的命中走通用融合分阈值（cross-encoder 生效时
+        // 可配独立阈值），关键词独有命中走关键词通道自己的归一 ts_rank 门槛——
+        // 不再用同一个 cosine 量纲阈值一刀切（旧实现把关键词通道整体绞杀在阈值处，
+        // 且该逻辑内联在本类，评估链手动装配时会与生产悄悄分叉）。
         List<DocumentChunk> chunks = results.stream()
-                .filter(result -> fusedScore(result) >= scoreThreshold)
                 .map(SearchResult::chunk)
                 .toList();
 
@@ -132,15 +133,6 @@ public class RetrievalServiceImpl implements RetrievalService {
                 .degradedChannels(degradedChannels)
                 .chunks(chunks)
                 .build();
-    }
-
-    /**
-     * 返回用于阈值过滤的融合归一分：重排开启时为 rerankScore，
-     * 否则为通道内已归一化的 rawScore（向量=cosine，关键词=排名归一分）。
-     */
-    private double fusedScore(SearchResult result) {
-        Double rerankScore = result.chunk().getRerankScore();
-        return rerankScore != null ? rerankScore : result.rawScore();
     }
 
     /** 查询改写属于小模型任务：配置了 ai.chat.roles.utility 时不再烧主模型 */

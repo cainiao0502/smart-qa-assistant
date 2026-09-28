@@ -81,22 +81,28 @@ public class RerankPostProcessor implements SearchPostProcessor {
         return 200;
     }
 
+    /**
+     * 重排：给候选写 rerankScore / hitReason 并<b>按分降序排列</b>，但不做截断。
+     *
+     * <p>截断（{@code limit(topK)}）自 C2 起归属 {@link ThresholdFilterPostProcessor}
+     * （链末位），实现「先筛后取前 K」：被阈值否掉的席位可由更靠后的候选回填，且
+     * {@code rerank.enabled=false} 时链上依然存在截断点。本处理器只负责排序语义。</p>
+     */
     @Override
     public List<SearchResult> process(List<SearchResult> inputs, SearchContext context) {
         if (!enabled || inputs == null || inputs.isEmpty()) {
-            return inputs == null ? List.of() : inputs.stream().limit(context.topK()).toList();
+            return inputs == null ? List.of() : List.copyOf(inputs);
         }
 
         Set<String> queryTokens = tokenize(context.effectiveQuery());
 
-        // 语义分量归一路径：只有向量通道的结果带 cosine 相似度（chunk.getScore()）。
-        // 关键词通道的 chunk.getScore() 是命中计数/排名，量纲完全不同，绝不能冒充语义分
-        // （旧实现对 score=null 的结果回退 rawScore 充当语义分，与 cosine 直接混算）。
-        // 先对候选集内向量通道的原始分做 min-max 归一到 [0,1] 再加权；
-        // 非向量通道没有语义证据，语义分量记 0，靠词法分与 RRF 排名参与排序。
+        // 语义分量归一路径：只有向量通道的命中带 cosine 相似度。关键词通道的 score 是
+        // 归一 ts_rank，量纲完全不同，绝不能冒充语义分（旧实现对 score=null 的结果回退
+        // rawScore 充当语义分，与 cosine 直接混算）。去重合并后，双通道共同命中的切片
+        // 即使主通道是 keyword，其向量侧 cosine 仍保留在 channelScores 里——这里按
+        // scoreFrom(vector) 取证，而不是主通道身份，共同命中不再被当成「无语义证据」。
         DoubleSummaryStatistics semanticStats = inputs.stream()
-                .filter(r -> VectorSearchChannel.CHANNEL_NAME.equals(r.channel()))
-                .map(r -> r.chunk().getScore())
+                .map(r -> r.scoreFrom(VectorSearchChannel.CHANNEL_NAME))
                 .filter(Objects::nonNull)
                 .mapToDouble(Double::doubleValue)
                 .summaryStatistics();
@@ -104,12 +110,17 @@ public class RerankPostProcessor implements SearchPostProcessor {
         // cross-encoder 精排：配置开启且客户端可用时，用「query+候选文本」成对打分替代
         // 向量 cosine 启发式作为语义分量来源（对所有通道统一适用，不再只有向量通道有语义证据）。
         Map<Integer, Double> crossEncoderScores = tryCrossEncoderRerank(inputs, context);
+        if (crossEncoderScores != null) {
+            // 向链路下游广播 CE 实际生效：ThresholdFilterPostProcessor 据此切换阈值量纲
+            context.addFlag(SearchContext.FLAG_CROSS_ENCODER);
+        }
         if (crossEncoderEnabled && crossEncoderScores == null) {
-            // cross-encoder 启用但调用失败（供应商异常/超时）：保持上游（去重后）排序并截断
-            // top-k，不做启发式重排——2026-09-27 线上消融证明启发式重排 recall 为负收益
-            // （0.906 vs 无重排 0.969），失败时退回启发式等于主动降级检索质量
+            // cross-encoder 启用但调用失败（供应商异常/超时）：保持上游（去重后）排序，
+            // 不做启发式重排——2026-09-27 线上消融证明启发式重排 recall 为负收益
+            // （0.906 vs 无重排 0.969），失败时退回启发式等于主动降级检索质量。
+            // 截断交给链末位的 ThresholdFilterPostProcessor。
             log.warn("cross-encoder rerank enabled but unavailable, falling back to un-reranked order");
-            return inputs.stream().limit(context.topK()).toList();
+            return List.copyOf(inputs);
         }
 
         List<SearchResult> inputsList = List.copyOf(inputs);
@@ -127,16 +138,16 @@ public class RerankPostProcessor implements SearchPostProcessor {
                     + lexicalScore * lexicalWeight
                     + rrfScore * rrfWeight;
             chunk.setRerankScore(rerankScore);
-            chunk.setHitReason(buildHitReason(chunk, context, lexicalScore, result.channel(), crossEncoderScores != null));
+            chunk.setHitReason(buildHitReason(chunk, context, lexicalScore, result, crossEncoderScores != null));
         }
 
+        // 只排序不截断：截断在 ThresholdFilterPostProcessor（先筛后取前 K）
         return inputsList.stream()
                 .sorted(Comparator
                         .comparing(SearchResult::chunk,
                                 Comparator.comparing(DocumentChunk::getRerankScore,
                                         Comparator.nullsLast(Comparator.reverseOrder())))
                         .thenComparing(SearchResult::rawScore, Comparator.reverseOrder()))
-                .limit(context.topK())
                 .toList();
     }
 
@@ -174,14 +185,11 @@ public class RerankPostProcessor implements SearchPostProcessor {
     }
 
     /**
-     * 语义分归一：向量通道的 cosine 原始分在候选集内 min-max 归一到 [0,1]；
-     * 非向量通道（或 score 缺失）没有语义证据，记 0，不冒充语义分。
+     * 语义分归一：向量通道命中（无论是否为主通道——去重合并后双通道命中保留全部身份）
+     * 的 cosine 在候选集内 min-max 归一到 [0,1]；无向量证据的命中记 0，不冒充语义分。
      */
     private double normalizedSemanticScore(SearchResult result, DoubleSummaryStatistics stats) {
-        if (!VectorSearchChannel.CHANNEL_NAME.equals(result.channel())) {
-            return 0.0;
-        }
-        Double score = result.chunk().getScore();
+        Double score = result.scoreFrom(VectorSearchChannel.CHANNEL_NAME);
         if (score == null) {
             return 0.0;
         }
@@ -194,21 +202,24 @@ public class RerankPostProcessor implements SearchPostProcessor {
         return (score - min) / (max - min);
     }
 
+    /**
+     * 真 RRF：对切片的<strong>每个</strong>命中通道求 1/(k + 通道内排名) 再求和——
+     * 跨通道共同命中得到证据叠加（双通道 ≈ 2×单通道），这才符合 Reciprocal Rank Fusion
+     * 的定义。旧实现只在同通道内计排名（去重后同 chunkId 只剩一条，产出恒 ≤1/61），
+     * 是「假 RRF」；且逐目标重算三层嵌套为 O(n³)，这里预聚合为 O(n²)。
+     * 通道内排名与 DedupPostProcessor 同口径：严格大于者 +1（标准竞赛排名）。
+     */
     private double computeRrfScore(SearchResult target, List<SearchResult> all) {
         double rrf = 0.0;
-        for (SearchResult result : all) {
-            if (!result.channel().equals(target.channel())) {
-                continue;
-            }
-            int rank = 0;
-            for (SearchResult r : all) {
-                if (r.channel().equals(result.channel()) && r.rawScore() > result.rawScore()) {
+        for (Map.Entry<String, Double> hit : target.channelScores().entrySet()) {
+            int rank = 1;
+            for (SearchResult other : all) {
+                Double score = other.scoreFrom(hit.getKey());
+                if (score != null && score > hit.getValue()) {
                     rank++;
                 }
             }
-            if (result.chunkId() != null && result.chunkId().equals(target.chunkId())) {
-                rrf += 1.0 / (RRF_K + rank + 1);
-            }
+            rrf += 1.0 / (RRF_K + rank);
         }
         return rrf;
     }
@@ -242,7 +253,7 @@ public class RerankPostProcessor implements SearchPostProcessor {
     }
 
     private String buildHitReason(DocumentChunk chunk, SearchContext context, double lexicalScore,
-                                  String channel, boolean crossEncoderActive) {
+                                  SearchResult result, boolean crossEncoderActive) {
         List<String> reasons = new java.util.ArrayList<>();
         if (crossEncoderActive) {
             // cross-encoder 模式：语义分量来自重排模型而非向量 cosine，
@@ -250,16 +261,19 @@ public class RerankPostProcessor implements SearchPostProcessor {
             reasons.add("cross-encoder 重排分 " + formatDecimal(chunk.getRerankScore())
                     + "，关键词匹配度 " + formatDecimal(lexicalScore));
         } else {
-            if (chunk.getScore() != null) {
-                reasons.add("向量相似度 " + formatDecimal(chunk.getScore())
-                        + "，高于阈值 " + formatDecimal(context.scoreThreshold()));
+            Double vectorScore = result.scoreFrom(VectorSearchChannel.CHANNEL_NAME);
+            if (vectorScore != null) {
+                // 只呈现证据值，不断言「高于阈值」：阈值门槛作用于融合分，且由
+                // ThresholdFilterPostProcessor 按量纲分标定，对关键词独有命中并不适用
+                reasons.add("向量相似度 " + formatDecimal(vectorScore));
             }
             if (chunk.getRerankScore() != null) {
                 reasons.add("重排分 " + formatDecimal(chunk.getRerankScore())
                         + "，关键词匹配度 " + formatDecimal(lexicalScore));
             }
         }
-        reasons.add("召回通道: " + channel);
+        // 列出全部命中通道：双通道共同命中是跨通道证据，对调试可见
+        reasons.add("召回通道: " + String.join("+", result.channelScores().keySet()));
         if (!context.originalQuery().equals(context.effectiveQuery())) {
             reasons.add("检索改写：\"" + context.originalQuery() + "\" -> \"" + context.effectiveQuery() + "\"");
         }
