@@ -1,0 +1,97 @@
+# 评估门禁（E1）：在真库 + 真实 embedding 供应商上跑 RAG 消融，基线 recall 低于
+# vars.APP_EVAL_MIN_RECALL 时任务失败（app.eval.min-recall 门禁使进程非零退出）。
+#
+# 前置配置（仓库 Settings）：
+#   Secrets: EMBEDDING_API_KEY（必填，缺省时任务告警跳过而非失败——PR 流程不被阻塞）
+#            SILICONFLOW_API_KEY（可选，embedding 备用供应商）
+#            APP_LLM_API_KEY（可选，跑含改写的全量消融列时需要；默认 skip-rewrite=true 不需要）
+#   Variables: APP_EVAL_MIN_RECALL（门禁阈值，参考基线 0.969，建议 0.95）
+#
+# 手动触发：Actions → Eval gate → Run workflow。日常由 schedule 每晚跑一次。
+
+name: Eval gate
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "0 21 * * *" # 每日 UTC 21:00（北京时间 05:00）
+
+jobs:
+  eval:
+    name: RAG evaluation gate
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    services:
+      postgres:
+        image: pgvector/pgvector:pg16
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: ragent
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+    env:
+      SPRING_DATASOURCE_URL: jdbc:postgresql://127.0.0.1:5432/ragent
+      SPRING_DATASOURCE_USERNAME: postgres
+      SPRING_DATASOURCE_PASSWORD: postgres
+      APP_EVAL_ENABLED: "true"
+      APP_EVAL_EXIT_AFTER_RUN: "true"
+      APP_EVAL_SKIP_REWRITE: "true"
+      APP_EVAL_MIN_RECALL: ${{ vars.APP_EVAL_MIN_RECALL || '0.95' }}
+      EMBEDDING_API_KEY: ${{ secrets.EMBEDDING_API_KEY }}
+      SILICONFLOW_API_KEY: ${{ secrets.SILICONFLOW_API_KEY }}
+      APP_LLM_API_KEY: ${{ secrets.APP_LLM_API_KEY }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up JDK 21
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "21"
+          cache: maven
+
+      - name: Skip when no embedding key configured
+        if: env.EMBEDDING_API_KEY == '' && env.SILICONFLOW_API_KEY == ''
+        run: |
+          echo "::warning::EMBEDDING_API_KEY / SILICONFLOW_API_KEY 均未配置，评估门禁跳过（在仓库 Secrets 配置后生效）"
+
+      # service: postgres 起的是全新空库，不建表/不灌语料会必然失败：
+      #   ① 不建表 → DatabaseSchemaInitializer 启动时执行
+      #      ALTER TABLE document_chunk ... 报 relation does not exist → 启动失败；
+      #   ② 不灌语料 → 评估集（kbId=2）与库脱节，evaluationSetInSyncWithDb 判脱节并中止。
+      # seed.sql 内含 embedding，CI 无需调用 embedding 供应商灌数据（只用于查询向量化）。
+      # ON_ERROR_STOP=1 保证建表/灌数失败立即红灯，不被后续语句掩盖。
+      - name: Initialize schema and seed evaluation corpus
+        if: env.EMBEDDING_API_KEY != '' || env.SILICONFLOW_API_KEY != ''
+        env:
+          PGPASSWORD: postgres
+        run: |
+          psql -h 127.0.0.1 -U postgres -d ragent -v ON_ERROR_STOP=1 -q -f database.sql
+          psql -h 127.0.0.1 -U postgres -d ragent -v ON_ERROR_STOP=1 -q -f data/eval/seed.sql
+          psql -h 127.0.0.1 -U postgres -d ragent -t -A \
+            -c "SELECT 'documents=' || count(*) FROM document" \
+            -c "SELECT 'chunks=' || count(*) FROM document_chunk" \
+            -c "SELECT 'kb=' || id || ' owner=' || coalesce(owner_user_id::text, 'NULL') FROM knowledge_base WHERE id = 2"
+
+      - name: Run evaluation (boot app; eval runner exits the process when done)
+        if: env.EMBEDDING_API_KEY != '' || env.SILICONFLOW_API_KEY != ''
+        run: |
+          mvn -B -pl ragent-bootstrap -am spring-boot:run \
+            -Dspring-boot.run.jvmArguments="-Dspring.main.web-application-type=none" \
+            2>&1 | tee eval.log
+          # min-recall 门禁失败 / 连续失败 tripwire 都会让进程非零退出，管道右侧 tee 会吃掉退出码
+          test ${PIPESTATUS[0]} -eq 0
+
+      - name: Upload eval log
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: eval-log
+          path: eval.log
+          retention-days: 14

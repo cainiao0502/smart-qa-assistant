@@ -4,12 +4,26 @@ CREATE TABLE IF NOT EXISTS knowledge_base (
     id BIGSERIAL PRIMARY KEY,
     name VARCHAR(128) NOT NULL,
     description TEXT,
+    -- 归属隔离：知识库按 owner 划分租户，检索侧 fail-closed 依赖本列
+    owner_user_id BIGINT,
     created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
     updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
 
 ALTER TABLE IF EXISTS knowledge_base
     ALTER COLUMN description TYPE TEXT;
+
+-- Add owner_user_id if the table already exists without it
+DO $$ BEGIN
+    IF NOT EXISTS (
+        SELECT 1 FROM information_schema.columns
+        WHERE table_name = 'knowledge_base' AND column_name = 'owner_user_id'
+    ) THEN
+        ALTER TABLE knowledge_base ADD COLUMN owner_user_id BIGINT;
+    END IF;
+END $$;
+
+CREATE INDEX IF NOT EXISTS idx_knowledge_base_owner ON knowledge_base(owner_user_id);
 
 CREATE TABLE IF NOT EXISTS document (
     id BIGSERIAL PRIMARY KEY,
@@ -88,11 +102,23 @@ CREATE TABLE IF NOT EXISTS chat_message (
     content TEXT NOT NULL,
     references_json JSONB,
     tool_calls_json JSONB,
+    -- 归属隔离：会话消息归属用户，跨租户读取由该列拦截
+    owner_user_id BIGINT,
     created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
 
 -- Allow kb_id to be NULL for general assistant mode (no knowledge base)
 ALTER TABLE chat_message ALTER COLUMN kb_id DROP NOT NULL;
+
+-- Add owner_user_id if the table already exists without it
+DO $$ BEGIN
+    IF NOT EXISTS (
+        SELECT 1 FROM information_schema.columns
+        WHERE table_name = 'chat_message' AND column_name = 'owner_user_id'
+    ) THEN
+        ALTER TABLE chat_message ADD COLUMN owner_user_id BIGINT;
+    END IF;
+END $$;
 
 DO $$ BEGIN
     IF NOT EXISTS (
@@ -115,6 +141,7 @@ END $$;
 CREATE INDEX IF NOT EXISTS idx_chat_message_session_id ON chat_message(session_id);
 CREATE INDEX IF NOT EXISTS idx_chat_message_kb_id ON chat_message(kb_id);
 CREATE INDEX IF NOT EXISTS idx_chat_message_run_id ON chat_message(run_id);
+CREATE INDEX IF NOT EXISTS idx_chat_message_owner ON chat_message(owner_user_id);
 
 CREATE TABLE IF NOT EXISTS agent_run (
     id BIGSERIAL PRIMARY KEY,
@@ -124,10 +151,32 @@ CREATE TABLE IF NOT EXISTS agent_run (
     user_goal TEXT NOT NULL,
     status VARCHAR(32) NOT NULL,
     final_answer TEXT,
+    -- 运行统计（可观测性）：LLM 调用次数与 token 用量，供成本统计/OTel GenAI 语义约定导出
+    llm_calls INT,
+    input_tokens INT,
+    output_tokens INT,
+    cached_tokens INT,
+    reasoning_tokens INT,
+    duration_ms BIGINT,
     owner_user_id BIGINT,
     created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
     updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
+
+-- Add run-statistics columns if the table already exists without them
+DO $$ BEGIN
+    IF NOT EXISTS (
+        SELECT 1 FROM information_schema.columns
+        WHERE table_name = 'agent_run' AND column_name = 'llm_calls'
+    ) THEN
+        ALTER TABLE agent_run ADD COLUMN llm_calls INT;
+        ALTER TABLE agent_run ADD COLUMN input_tokens INT;
+        ALTER TABLE agent_run ADD COLUMN output_tokens INT;
+        ALTER TABLE agent_run ADD COLUMN cached_tokens INT;
+        ALTER TABLE agent_run ADD COLUMN reasoning_tokens INT;
+        ALTER TABLE agent_run ADD COLUMN duration_ms BIGINT;
+    END IF;
+END $$;
 
 CREATE INDEX IF NOT EXISTS idx_agent_run_session_id ON agent_run(session_id);
 CREATE INDEX IF NOT EXISTS idx_agent_run_kb_id ON agent_run(kb_id);
@@ -164,6 +213,7 @@ CREATE TABLE IF NOT EXISTS document_task (
     chunk_duration_ms BIGINT,                           -- 切分步骤耗时（毫秒）
     embed_duration_ms BIGINT,                           -- 向量化步骤耗时（毫秒）
     index_duration_ms BIGINT,                           -- 写入步骤耗时（毫秒）
+    retry_count INT NOT NULL DEFAULT 0,                 -- 失败重试计数，超过上限不再重试
     created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
     updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
@@ -178,6 +228,16 @@ DO $$ BEGIN
         ALTER TABLE document_task ADD COLUMN chunk_duration_ms BIGINT;
         ALTER TABLE document_task ADD COLUMN embed_duration_ms BIGINT;
         ALTER TABLE document_task ADD COLUMN index_duration_ms BIGINT;
+    END IF;
+END $$;
+
+-- Add retry_count if the table already exists without it（DocumentTaskScheduler 失败重试计数）
+DO $$ BEGIN
+    IF NOT EXISTS (
+        SELECT 1 FROM information_schema.columns
+        WHERE table_name = 'document_task' AND column_name = 'retry_count'
+    ) THEN
+        ALTER TABLE document_task ADD COLUMN retry_count INT NOT NULL DEFAULT 0;
     END IF;
 END $$;
 

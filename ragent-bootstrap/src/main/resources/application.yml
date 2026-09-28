@@ -140,6 +140,13 @@ app:
       approval-timeout-ms: ${APP_TOOL_APPROVAL_TIMEOUT_MS:120000}
       # 受信工具白名单（暴露名，逗号分隔）：管理员确认过、不便逐次确认的工具可列入
       trusted-tools: ${APP_TOOL_APPROVAL_TRUSTED_TOOLS:}
+    # Planner 上下文视图的三个口径（此前硬编码，与下面 compaction 的 trigger-chars 各管一段：
+    # trigger-chars 管「步骤观察总量」何时摘要，这里管单条观察/历史/切片进入视图的上限）。
+    # 注意 retrieval-chunks 与 app.rag.top-k 的联动：调大 top-k 而不动这里，Planner 仍只看前 N 条
+    planner:
+      step-observation-chars: 800   # 单条步骤观察截断，<=0 不裁剪
+      retrieval-chunks: 4           # Planner 可见的检索切片上限，<=0 跟随 top-k
+      history-messages: 4           # Planner 可见的最近历史条数，<=0 不限
     compaction:
       # 参考 pi harness/compaction：步骤观察总量超过阈值时，把早期步骤摘要成一条
       # 结构化记录（最近 N 步与 plan 步骤保留原文），Planner 视图不再随步数线性膨胀。
@@ -154,9 +161,10 @@ app:
     upload-dir: uploads
   rag:
     top-k: 4
-    # 距离阈值（换算为融合分下限 1-x=0.6）。注意：cross-encoder 开启时该阈值需重新标定——
-    # 2026-09-27 线上消融显示 Jina 分数量纲下 0.6 会把 recall 从 1.000 压到 0.906
-    # （precision 升至 1.000），按所选 rerank 供应商的分数分布调整
+    # 距离阈值（换算为融合分下限 1-x=0.6），作用于有向量证据的命中。注意量纲：
+    # cross-encoder 开启时融合分是 CE 量纲，需按 rerank 供应商的分数分布重标定
+    # （2026-09-27 线上消融显示 Jina 量纲下 0.6 会把 recall 从 1.000 压到 0.906、
+    # precision 升至 1.000）——用 app.rag.rerank.cross-encoder.min-fused-score 单独覆盖
     reference-distance-threshold: 0.4
     history-limit: 6
     history-token-budget: 6000
@@ -167,8 +175,10 @@ app:
     context-expansion:
       enabled: true
       window: 1
-    # 旧数据回填：为 chunk_tokens 为 NULL 的历史切片补分词（tsv 索引切换的一次性迁移），
-    # 关闭后历史切片在关键词通道不可见
+    # chunk_tokens 重建：tsv 是 chunk_tokens 的生成列，本 runner 启动时把 NULL 行与
+    # 旧格式行（历史版本错误复用查询侧 24-token 上限，长切片只有头部 ~25 字进 tsv 索引）
+    # 重分词为全量结果；重分词与现值相同的行幂等跳过。关闭后旧格式切片在关键词通道
+    # 对切片尾部内容不可见
     chunk-token-backfill:
       enabled: true
     query-rewrite:
@@ -181,6 +191,11 @@ app:
     channel:
       keyword:
         enabled: true   # 关置 false 即纯向量检索（消融实验用）
+        # 关键词独有命中的门槛（归一 ts_rank 量纲，与 cosine/CE 量纲不可比）。
+        # 0 = 通道 SQL 的真实 tsquery 命中即通过，体量交给排序与 top-k 竞争；
+        # 旧实现误用 cosine 量纲的 0.6 一刀切，把关键词通道整体绞杀在阈值处（S0-②）。
+        # 需要收紧 precision 时用消融标定
+        min-score: ${APP_RAG_CHANNEL_KEYWORD_MIN_SCORE:0.0}
       vector:
         enabled: true   # 关置 false 即纯关键词检索（消融实验用）
     # 每文档席位上限（结果多样性）：限制单个文档在去重后序列中最多占用的席位数，
@@ -192,11 +207,17 @@ app:
       candidate-multiplier: 3   # 各检索通道按 topK×N 召回候选，再进 RRF 融合与加权打分；配 <1 时按 topK 处理
       semantic-weight: 0.75
       lexical-weight: 0.25
-      # cross-encoder 精排：2026-09-27 线上消融证明其 recall 完胜启发式（1.000 vs 0.969），
-      # 且启发式重排本身为负收益（0.906）——生产强烈建议开启（需配置 ai.rerank.*，
-      # Jina/SiliconFlow 等 /rerank 协议兼容；cross-encoder 调用失败时自动保持未重排顺序）
+      # cross-encoder 精排：2026-09-27 线上消融（32 条，kbId=2）：recall 1.000 / precision 0.816，
+      # 完胜无重排（0.969/0.721）与启发式重排（0.906/0.707，负收益三度实锤）——
+      # 对启发式 +9.4pp，但其中混着「关键词通道 0.25 语义天花板被拆除」的修复效应，
+      # 不宜表述为 cross-encoder 提升 3.1%（0.969 是无重排，不是启发式——旧注释配对错误）。
+      # 生产强烈建议开启（需配置 ai.rerank.*，Jina/SiliconFlow 等 /rerank 协议兼容；
+      # cross-encoder 调用失败时自动保持未重排顺序）
       cross-encoder:
         enabled: ${APP_RAG_CROSS_ENCODER_ENABLED:false}
+        # CE 分数量纲下的融合分阈值（cosine 量纲的 0.6 不可移植，见上）。<=0 = 沿用
+        # reference-distance-threshold 换算的通用阈值；换 rerank 供应商后按消融重标定
+        min-fused-score: ${APP_RAG_CROSS_ENCODER_MIN_FUSED_SCORE:0.0}
   eval:
     enabled: ${APP_EVAL_ENABLED:false}
     semantic-enabled: ${APP_EVAL_SEMANTIC_ENABLED:false}
@@ -204,6 +225,11 @@ app:
     # 跳过含查询改写的消融组合（rewrite 列依赖 chat 模型）：
     # chat 供应商不可用/余额耗尽时开启，只跑 noRewrite / minimal / 阈值三列
     skip-rewrite: ${APP_EVAL_SKIP_REWRITE:false}
+    # 评估门禁（CI 用）：>0 时基线 recall 低于该值 → 启动失败（非零退出码）。
+    # 基线取自 cc09b8f 消融记录（0.969）；本地标定用 0，CI 里按 vars.APP_EVAL_MIN_RECALL 配
+    min-recall: ${APP_EVAL_MIN_RECALL:0.0}
+    # 评估（含门禁）结束后退出进程——CI 门禁模式必须开，否则应用照常挂起直到任务超时
+    exit-after-run: ${APP_EVAL_EXIT_AFTER_RUN:false}
   mcp:
     enabled: ${APP_MCP_ENABLED:false}
     request-timeout-ms: ${APP_MCP_REQUEST_TIMEOUT_MS:30000}
