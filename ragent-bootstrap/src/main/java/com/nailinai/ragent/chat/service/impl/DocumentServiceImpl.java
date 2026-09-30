@@ -78,6 +78,7 @@ public class DocumentServiceImpl implements DocumentService {
 
     @Override
     public List<DocumentResponse> listByKbId(Long kbId) {
+        requireAccessibleKnowledgeBase(kbId);
         return documentMapper.selectByKbId(kbId).stream()
                 .map(this::toResponse)
                 .toList();
@@ -191,6 +192,31 @@ public class DocumentServiceImpl implements DocumentService {
             throw new BusinessException(ErrorCode.NOT_FOUND, "document not found");
         }
         return document;
+    }
+
+    /**
+     * 校验知识库对当前用户可见。
+     *
+     * <p>文档列表是知识库内容的出口之一，但此前只按 kbId 查询、没有归属校验：
+     * 任何登录用户只要猜到（自增的）kbId，就能列出别人知识库下的文档名、类型与状态。
+     * 同一份数据的其它出口——文档详情、触发入库、删除——都走
+     * {@link #requireAccessibleDocument} 校验了归属，知识库入口（上传、删库）也校验了 owner，
+     * 只有这里漏了，等于数据出口比入口更松。</p>
+     *
+     * <p>与 {@link #requireAccessibleDocument} 同口径：<b>没有登录上下文的内部调用直接放行</b>
+     * （离线评估、知识库级联删除等，其归属由上游负责）。用户请求一定带 userId——
+     * 要么在请求线程里取自 Sa-Token，要么由 {@code ChatController} 预先绑定到异步线程
+     * （见 {@link UserIdHolder}）。</p>
+     */
+    private void requireAccessibleKnowledgeBase(Long kbId) {
+        Long userId = UserIdHolder.get();
+        if (userId == null) {
+            return;
+        }
+        if (knowledgeBaseMapper.selectByIdAndOwner(kbId, userId) == null) {
+            // 与文档读接口保持同一口径：不暴露「这个知识库存在但不属于你」
+            throw new BusinessException(ErrorCode.NOT_FOUND, "knowledge base not found");
+        }
     }
 
     private String resolveFilename(String filename) {
